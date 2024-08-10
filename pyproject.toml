@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fabrique"
+name = "equilibrium"
 version = "0.1.0"
-description = "Research-friendly implementation of LLMs in JAX"
+description = "Research-friendly diffusion models in JAX"
 authors = [
   { name="Andrei Zhabinski", email="andrei.zhabinski@gmail.com" },
 ]
@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/dfdx/fabrique"
+Homepage = "https://github.com/dfdx/equilibrium"
 
 
 [project.optional-dependencies]

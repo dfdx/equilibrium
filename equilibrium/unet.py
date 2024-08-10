@@ -4,7 +4,7 @@ import math
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from diffusion.normalization import GroupNorm
+from equilibrium.normalization import GroupNorm
 
 
 class SinusoidalEmbedding(nnx.Module):
@@ -131,7 +131,7 @@ class Down(nnx.Module):
         norm = self.norm(att)
         x = norm + x
         if hasattr(self, "down_conv"):
-            downsized = self.down_conv(x)
+            downsized = self.down_conv(x)    # not used in the last step
             return x, downsized
         else:
             return x, x
@@ -139,19 +139,20 @@ class Down(nnx.Module):
 
 class Up(nnx.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, num_groups: int, /, rngs: nnx.Rngs):
-
+    def __init__(self, in_channels: int, out_channels: int | None, num_groups: int, /, rngs: nnx.Rngs):
         self.resnet_block = ResnetBlock(in_channels, num_groups, rngs=rngs)
         self.attention = Attention(in_channels, rngs=rngs)
         self.norm = GroupNorm(num_features=in_channels, num_groups=num_groups, rngs=rngs)
-        self.up_conv = nnx.ConvTranspose(in_channels, out_channels, (4,4), (2,2), rngs=rngs)
+        if out_channels:
+            self.up_conv = nnx.ConvTranspose(in_channels, out_channels, (4,4), (2,2), rngs=rngs)
 
     def __call__(self, x, time_emb):
         x = self.resnet_block(x, time_emb)
         att = self.attention(x)
         norm = self.norm(att)
         x = norm + x
-        x = self.up_conv(x)
+        if hasattr(self, "up_conv"):
+            x = self.up_conv(x)        # not used in the last step
         return x
 
 
@@ -182,11 +183,21 @@ class UNet(nnx.Module):
         self.mid_norm = GroupNorm(num_features=mid_dim, num_groups=num_groups, rngs=rngs)
         self.mid_resnet2 = ResnetBlock(mid_dim, self.num_groups, rngs=rngs)
         # up
-        # self.up_blocks = [Down(d * 2, num_groups, rngs=rngs) for d in reversed(dims)]
+        self.up_blocks = []
+        r_dims = list(reversed(dims))
+        for i, dim in enumerate(r_dims):
+            if i < len(dims) - 1:
+                block = Up(r_dims[i] * 2, r_dims[i + 1], num_groups, rngs=rngs)
+            else:
+                block = Up(r_dims[i] * 2, None, num_groups, rngs=rngs)
+            self.up_blocks.append(block)
+        self.out_resnet = ResnetBlock(dim * 2, self.num_groups, rngs=rngs)
+        self.out_conv = nnx.Conv(dim * 2, dim, (1,1), padding="SAME", rngs=rngs)
+
 
 
     def __call__(self, x, time):
-        channels = x.shape[-1]
+        # channels = x.shape[-1]
         x = self.in_conv(x)
         time_emb = self.time_embedding(time)
 
@@ -211,17 +222,11 @@ class UNet(nnx.Module):
         # Upsampling phase
         for index, dim in enumerate(reversed(self.dims)):
             x = jnp.concatenate([pre_downsampling.pop(), x], -1)
-            # x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-            # x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-            # att = Attention(dim)(x)
-            # norm = nn.GroupNorm(self.num_groups)(att)
-            # x = norm + x
-            if index != len(dims) - 1:
-                x = nn.ConvTranspose(dim, (4,4), (2,2))(x)
+            x = self.up_blocks[index](x, time_emb)
 
         # Final ResNet block and output convolutional layer
-        x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-        x = nn.Conv(channels, (1,1), padding="SAME")(x)
+        x = self.out_resnet(x, time_emb)
+        x = self.out_conv(x)
         return x
 
 
@@ -276,6 +281,7 @@ def main():
 
     self = UNet(dim=dim)
     time = timestamps
+    y = self(x, time)
 
 
     # TODO: implement Up block

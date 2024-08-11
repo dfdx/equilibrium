@@ -77,7 +77,6 @@ class Attention(nnx.Module):
         return x
 
 
-# rename to ConvBlock?
 class ConvBlock(nnx.Module):
 
     def __init__(self, dim: int = 32, groups: int = 8, rngs: nnx.Rngs = nnx.Rngs(params=0)):
@@ -158,7 +157,7 @@ class Up(nnx.Module):
 
 class UNet(nnx.Module):
 
-    def __init__(self, dim: int = 8, dim_scale_factor: tuple = (1, 2, 4, 8), num_groups: int = 8, in_channels: int = 1, rngs: nnx.Rngs = nnx.Rngs(params=0)):
+    def __init__(self, dim: int = 8, dim_scale_factor: tuple = (1, 2, 4, 8), num_groups: int = 8, in_channels: int = 1, out_channels: int = 1, rngs: nnx.Rngs = nnx.Rngs(params=0)):
         dims = [dim * i for i in dim_scale_factor]
         self.dims = dims
         # self.dim = dim
@@ -167,7 +166,6 @@ class UNet(nnx.Module):
         self.time_embedding = TimeEmbedding(dim)
         self.in_conv = nnx.Conv(in_channels, dim, (7, 7), padding=((3,3), (3,3)), rngs=rngs)
         # down
-        # self.down_blocks = [Down(dims[i], dims[i + 1], num_groups, rngs=rngs) for i in range(len(dims))]
         self.down_blocks = []
         for i, dim in enumerate(dims):
             if i < len(dims) - 1:
@@ -175,7 +173,6 @@ class UNet(nnx.Module):
             else:
                 block = Down(dims[i], None, num_groups, rngs=rngs)
             self.down_blocks.append(block)
-        # self.down_convs = [nnx.Conv(self.dims[i], self.dims[i + 1], (4,4), (2,2), rngs=rngs) for i in range(len(self.dims) - 1)]
         # bottleneck
         mid_dim = dims[-1]
         self.mid_resnet = ResnetBlock(mid_dim, self.num_groups, rngs=rngs)
@@ -192,7 +189,7 @@ class UNet(nnx.Module):
                 block = Up(r_dims[i] * 2, None, num_groups, rngs=rngs)
             self.up_blocks.append(block)
         self.out_resnet = ResnetBlock(dim * 2, self.num_groups, rngs=rngs)
-        self.out_conv = nnx.Conv(dim * 2, dim, (1,1), padding="SAME", rngs=rngs)
+        self.out_conv = nnx.Conv(dim * 2, out_channels, (1,1), padding="SAME", rngs=rngs)
 
 
 
@@ -200,17 +197,12 @@ class UNet(nnx.Module):
         # channels = x.shape[-1]
         x = self.in_conv(x)
         time_emb = self.time_embedding(time)
-
-        # dims = [self.dim * i for i in self.dim_scale_factor]
         pre_downsampling = []
-
         # Downsampling phase
         for index, dim in enumerate(self.dims):
             skip, x = self.down_blocks[index](x, time_emb)
             # Saving this output for residual connection with the upsampling layer
             pre_downsampling.append(skip)
-            # if index != len(self.dims) - 1:
-            #     x = self.down_convs[index](x)
 
         # Middle block
         x = self.mid_resnet(x, time_emb)
@@ -233,10 +225,6 @@ class UNet(nnx.Module):
 ###########################################################
 
 
-import tensorflow as tf
-import tensorflow_datasets as tfds
-BATCH_SIZE = 8
-
 
 def get_datasets():
   # Load the MNIST dataset
@@ -252,6 +240,7 @@ def get_datasets():
 
     # Return numpy arrays instead of TF tensors while iterating
     return tfds.as_numpy(train_ds)
+
 
 
 def main():
@@ -282,6 +271,3 @@ def main():
     self = UNet(dim=dim)
     time = timestamps
     y = self(x, time)
-
-
-    # TODO: implement Up block

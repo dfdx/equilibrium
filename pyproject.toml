@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
     "flax>=0.8.4",
     "optax>=0.2.2",
+    "orbax>=0.1.9",
     "tokenizers>=0.19.1",
     "safetensors>=0.4.3",
     "huggingface-hub>=0.23.1",

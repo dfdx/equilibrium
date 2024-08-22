@@ -117,12 +117,12 @@ def train_epoch(epoch_num: int, model: UNet, optimizer: nnx.Optimizer, train_ds,
         # Timestamps are not needed anymore. Saves some memory.
         del timestamps
     train_loss = np.mean(epoch_loss)
-    return train_loss
+    return train_loss, rng
 
 
 
 
-def main():
+def train_model():
     train_ds = get_datasets()
     model = UNet(dim=32, in_channels=1, out_channels=1)
 
@@ -138,11 +138,11 @@ def main():
     rng = jax.random.key(0)
 
     for epoch in range(num_epochs):
-        train_epoch(epoch, model, optimizer, train_ds, rng)
+        loss, rng = train_epoch(epoch, model, optimizer, train_ds, rng)
+        print(f"====== Epoch {epoch}, loss: {loss} ======")
         save_model(model, os.path.abspath(f"output/unet_checkpoint_{epoch}"))
 
-    path = os.path.abspath("output/unet")
-    load_model(path, dim=32, in_channels=1, out_channels=1)
+    return model
 
 
 
@@ -197,29 +197,10 @@ def save_gif(img_list, path=""):
 
 
 
-def main_old():
-    train_ds = get_datasets()
-    # Let us visualize the output image at a few timestamps
-    sample_mnist = next(iter(train_ds))[0]
-
-    fig = plt.figure(figsize=(15, 30))
-
-    for index, i in enumerate([10, 50, 100, 185]):
-        noisy_im, noise = forward_noising(random.PRNGKey(0), jnp.expand_dims(sample_mnist, 0), jnp.array([i,]))
-        plt.subplot(1, 4, index+1)
-        plt.imshow(jnp.squeeze(jnp.squeeze(noisy_im, -1),0), cmap='gray')
-
-    plt.savefig("output/image.png")
-
-    model = UNet(32)
-    log_state = []
-
-    trained_state = train(train_ds)
-
-    # Generating Gaussian noise
+def main():
+    path = os.path.abspath("output/unet_checkpoint_7")
+    model = load_model(path, dim=32, in_channels=1, out_channels=1)
     x = random.normal(random.PRNGKey(42), (1, 32, 32, 1))
-
-#     trained_state = log_state[-1]
 
     # Create a list to store output images
     img_list_ddpm = []
@@ -233,7 +214,7 @@ def main_old():
         t = jnp.expand_dims(jnp.array(timesteps - i - 1, jnp.int32), 0)
 
         # Predict noise using U-Net
-        pred_noise = model.apply({'params': trained_state.params}, [x, t])
+        pred_noise = model(x, t)
 
         # Obtain the output from the noise using the formula seen before
         x = backward_denoising_ddpm(x, pred_noise, t)
@@ -250,3 +231,60 @@ def main_old():
 
     # Save generated GIF
     save_gif(img_list_ddpm, path="output/output_ddpm.gif")
+
+
+
+
+# def main_old():
+#     train_ds = get_datasets()
+#     # Let us visualize the output image at a few timestamps
+#     sample_mnist = next(iter(train_ds))[0]
+
+#     fig = plt.figure(figsize=(15, 30))
+
+#     for index, i in enumerate([10, 50, 100, 185]):
+#         noisy_im, noise = forward_noising(random.PRNGKey(0), jnp.expand_dims(sample_mnist, 0), jnp.array([i,]))
+#         plt.subplot(1, 4, index+1)
+#         plt.imshow(jnp.squeeze(jnp.squeeze(noisy_im, -1),0), cmap='gray')
+
+#     plt.savefig("output/image.png")
+
+#     model = UNet(32)
+#     log_state = []
+
+#     trained_state = train(train_ds)
+
+#     # Generating Gaussian noise
+#     x = random.normal(random.PRNGKey(42), (1, 32, 32, 1))
+
+# #     trained_state = log_state[-1]
+
+#     # Create a list to store output images
+#     img_list_ddpm = []
+
+#     # Append the initial noise to the list of images
+#     img_list_ddpm.append(jnp.squeeze(jnp.squeeze(x, 0),-1))
+
+#     # Iterate over T timesteps
+#     for i in tqdm(range(0, timesteps - 1)):
+#         # t-th timestep
+#         t = jnp.expand_dims(jnp.array(timesteps - i - 1, jnp.int32), 0)
+
+#         # Predict noise using U-Net
+#         pred_noise = model.apply({'params': trained_state.params}, [x, t])
+
+#         # Obtain the output from the noise using the formula seen before
+#         x = backward_denoising_ddpm(x, pred_noise, t)
+
+#         # Log the image after every 25 iterations
+#         if i % 25 == 0:
+#             img_list_ddpm.append(jnp.squeeze(jnp.squeeze(x, 0),-1))
+#             plt.imshow(jnp.squeeze(jnp.squeeze(x, 0),-1), cmap='gray')
+#             plt.show()
+
+#     # Display the final generated image
+#     plt.imshow(jnp.squeeze(jnp.squeeze(x, 0),-1), cmap='gray')
+#     plt.show()
+
+#     # Save generated GIF
+#     save_gif(img_list_ddpm, path="output/output_ddpm.gif")

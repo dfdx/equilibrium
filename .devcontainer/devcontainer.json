@@ -12,7 +12,8 @@
 	],
 
 	"containerEnv": {
-		"HF_TOKEN": "${localEnv:HF_TOKEN_PERSONAL}"
+		"HF_TOKEN": "${localEnv:HF_TOKEN_PERSONAL}",
+		"PYTHONPATH": "${PYTHONPATH}:fabrique"
 	},
 
 	"runArgs": ["--gpus", "all"]

@@ -31,41 +31,39 @@ class BertLM(nnx.Module):
         self.layers = [TransformerBlock(args, rngs=rngs) for _ in range(args.n_layers)]
         self.output = nnx.Linear(args.dim, args.vocab_size, use_bias=False, rngs=rngs)
 
-    def __call__(
+    def embed(
         self,
         tokens: jax.Array,
-        mask: jax.Array | None = None,
         segments: jax.Array | None = None,
-        timesteps: jax.Array | None = None,
-        deterministic=True,
-    ):
-        """
-        Perform a forward pass through the Transformer model.
-
-        Args:
-            tokens (jax.Array): Input token indices.
-            mask (jax.Array): Attention mask.
-            segments (jax.Array): Segment tokens.
-            timesteps (jax.Array): Array of time steps, shape = (bs,).
-            deterministic (bool): Deterministic flag for dropout.
-
-        Returns:
-            jax.Array: Output embeddings after applying the Transformer model.
-        """
-        if mask is None:
-            mask = jnp.ones_like(tokens)
+        deterministic=True
+    ) -> jax.Array:
         if segments is None:
             segments = jnp.zeros_like(tokens)
         position_ids = jnp.broadcast_to(jnp.arange(tokens.shape[-1]), tokens.shape)
         h = self.embeddings(tokens, segments, position_ids, deterministic=deterministic)
+        return h
+
+    def get_tokens(self, h: jax.Array) -> jax.Array:
+        logits = self.output(h).astype("float32")
+        return logits.argmax(axis=-1)
+
+    def __call__(
+        self,
+        x: jax.Array,
+        mask: jax.Array | None = None,
+        timesteps: jax.Array | None = None,
+        deterministic=True,
+    ):
+        if mask is None:
+            mask = jnp.ones(x.shape[:-1])
         # adding time embedding
         t_emb = timestep_embedding(timesteps, self.args.dim)
         # t_emb = self.time_adapter(t_emb)
-        h = h + jnp.expand_dims(t_emb, 1)  # broadcast time emb to each token
-        for i, layer in enumerate(self.layers):
+        h = x + jnp.expand_dims(t_emb, 1)  # broadcast time emb to each token
+        for _, layer in enumerate(self.layers):
             h = layer(h, mask, deterministic=deterministic)
-        output = self.output(h).astype("float32")
-        return output
+        return h
+
 
     @staticmethod
     def from_bert(model_id: str = "google-bert/bert-base-uncased", **kwargs):
@@ -98,7 +96,8 @@ def main():
     timesteps = jnp.asarray([3, 5])
     deterministic = True
 
-    logits = model(tokens, timesteps=timesteps)
-    out_tokens = logits.argmax(axis=-1)
-    tokenizer.decode_batch(out_tokens)
+    x = model.embed(tokens)
+    x_hat = model(x, timesteps=timesteps)
+    out_tokens = model.get_tokens(x_hat)
 
+    tokenizer.decode_batch(out_tokens)

@@ -7,6 +7,7 @@
 	},
 
 	"mounts": [
+		"source=${localEnv:HOME}/.ssh/,target=/home/devpod/.ssh,type=bind,consistency=cached",
 		"source=${localEnv:HOME}/.cache/huggingface/,target=/home/devpod/.cache/huggingface/,type=bind,consistency=cached",
 		"source=${localEnv:HOME}/data/,target=/data/,type=bind,consistency=cached"
 		//"source=${localEnv:HOME}/tensorflow_datasets/,target=/home/devpod/tensorflow_datasets,type=bind,consistency=cached"

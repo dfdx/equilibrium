@@ -15,8 +15,10 @@
 
 	"containerEnv": {
 		"HF_TOKEN": "${localEnv:HF_TOKEN_PERSONAL}",
-		"PYTHONPATH": "${PYTHONPATH}:fabrique"
-	}//,
+		"PYTHONPATH": "${PYTHONPATH}:fabrique",
+		"JAX_COMPILATION_CACHE_DIR": "/tmp/jax_cache",
+		"JAX_DEBUG_LOG_MODULES": "jax._src.compiler,jax._src.lru_cache"
+	},
 
-	//"runArgs": ["--gpus", "all"]
+	"runArgs": ["--gpus", "all"]
 }

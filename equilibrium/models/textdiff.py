@@ -1,3 +1,4 @@
+from functools import partial
 import jax
 import optax
 import jax.numpy as jnp
@@ -17,6 +18,7 @@ def get_dataset():
     return ds
 
 
+@partial(nnx.jit, static_argnums=[1])
 def loss_fn(model, noise_scheduler, x):
     # Generate random noise
     noise = jax.random.normal(jax.random.key(0), x.shape)
@@ -39,22 +41,6 @@ def loss_fn(model, noise_scheduler, x):
 def train(model, noise_scheduler, data: Dataset, num_epochs: int = 1, batch_size: int = 8, learning_rate=1e-5):
     optimizer = nnx.Optimizer(model, optax.adam(learning_rate))
 
-    # @nnx.jit
-    # def train_step(state, batch):
-    #     def loss_fn(params):
-    #         self.update(params)
-    #         return self.train_step(batch)
-
-    #     loss, grads = jax.value_and_grad(loss_fn)(state.params)
-    #     state = state.apply_gradients(grads=grads)
-    #     return state, loss
-
-    # state = nnx.TrainState.create(
-    #     apply_fn=self.apply,
-    #     params=self.parameters(),
-    #     tx=optimizer
-    # )
-
     losses = []
     for epoch in range(num_epochs):
         for texts in data.iter(batch_size=batch_size):
@@ -70,20 +56,25 @@ def train(model, noise_scheduler, data: Dataset, num_epochs: int = 1, batch_size
 
 
 def main():
+    jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+    jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+    jax.config.update("jax_explain_cache_misses", True)
+
+
     tokenizer, model, _ = BertLM.from_bert()
     noise_scheduler = DDPMScheduler()
-    diffusion_model = DiffusionModel(model, noise_scheduler)
-    self = diffusion_model
+    # diffusion_model = DiffusionModel(model, noise_scheduler)
+    # self = diffusion_model
 
     tokens = tokenize(tokenizer, ["Hello, world!", "I am an olive"])
     x = model.embed(tokens)
 
     data = get_dataset()
-    num_epochs: int = 1
+    num_epochs: int = 10
     batch_size: int = 8
     learning_rate = 1e-5
 
-    texts = next(iter(data.iter(batch_size=batch_size)))["text"]
+    texts = next(iter(data.iter(batch_size=batch_size)))
 
 
 

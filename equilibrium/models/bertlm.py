@@ -80,9 +80,10 @@ class BertLM(nnx.Module):
 
 from tokenizers import Tokenizer
 
-def tokenize(tokenizer: Tokenizer, texts: list[str], pad_id: int = 0):
+def tokenize(tokenizer: Tokenizer, texts: list[str], pad_id: int = 0, pad_to_multiple_of: int = 128, max_length: int = 512):
     # TODO: use mask for padding
-    tokenizer.enable_padding(pad_id=pad_id)
+    tokenizer.enable_padding(pad_id=pad_id, pad_to_multiple_of=pad_to_multiple_of)
+    tokenizer.enable_truncation(max_length=max_length)
     tokens = [e.ids for e in tokenizer.encode_batch(texts)]
     tokens = jnp.asarray(tokens)
     return tokens

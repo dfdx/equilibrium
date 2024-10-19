@@ -43,8 +43,11 @@ class BertLM(nnx.Module):
         h = self.embeddings(tokens, segments, position_ids, deterministic=deterministic)
         return h
 
+    def get_logits(self, h: jax.Array) -> jax.Array:
+        return self.output(h).astype("float32")
+
     def get_tokens(self, h: jax.Array) -> jax.Array:
-        logits = self.output(h).astype("float32")
+        logits = self.get_logits(h)
         return logits.argmax(axis=-1)
 
     def __call__(

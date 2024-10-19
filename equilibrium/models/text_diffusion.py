@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 from typing import Callable
 from tqdm import tqdm
 from PIL import Image
+from datasets import load_dataset
 
 from equilibrium.unet import UNet
 
@@ -36,20 +37,11 @@ NUM_STEPS_PER_EPOCH = 60000//BATCH_SIZE # MNIST has 60,000 training samples
 
 # Load MNIST dataset
 
-def get_datasets():
-  # Load the MNIST dataset
-    train_ds = tfds.load('mnist', as_supervised=True, split="train")
-
-    # Normalization helper
-    def preprocess(x, y):
-        return tf.image.resize(tf.cast(x, tf.float32) / 127.5 - 1, (32, 32))
-
-    # Normalize to [-1, 1], shuffle and batch
-    train_ds = train_ds.map(preprocess, tf.data.AUTOTUNE)
-    train_ds = train_ds.shuffle(5000).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
-
-    # Return numpy arrays instead of TF tensors while iterating
-    return tfds.as_numpy(train_ds)
+def get_dataset():
+    ds = load_dataset("billsum", split="ca_test")
+    ds = ds.with_format("jax")
+    ds = ds.remove_columns(["text", "summary"]).rename_column("title", "text")
+    return ds
 
 
 
@@ -123,7 +115,7 @@ def train_epoch(epoch_num: int, model: UNet, optimizer: nnx.Optimizer, train_ds,
 
 
 def train_model():
-    train_ds = get_datasets()
+    train_ds = get_dataset()
     model = UNet(dim=32, in_channels=1, out_channels=1)
 
     x = next(iter(train_ds))

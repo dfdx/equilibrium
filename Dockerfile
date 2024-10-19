@@ -5,6 +5,7 @@ FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build-base
 
 ## Basic system setup
 
+RUN echo "trigger change"
 ENV user=devpod
 SHELL ["/bin/bash", "-c"]
 
@@ -108,5 +109,6 @@ FROM build-dev AS build-test
 
 RUN pip install Pillow matplotlib tensorflow
 RUN pip install tensorflow-datasets
+RUN pip install datasets
 
 CMD ["echo", "Explore!"]

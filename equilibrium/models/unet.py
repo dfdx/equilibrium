@@ -7,6 +7,7 @@ import math
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Optional, Tuple
+from functools import partial
 
 import numpy as np
 import jax
@@ -109,27 +110,38 @@ class QKVAttention(nnx.Module):
     def __call__(self, qkv):
         """
         Apply QKV attention.
-        :param qkv: an [N x (3 * H * C) x T] tensor of Qs, Ks, and Vs.
-        :return: an [N x (H * C) x T] tensor after attention.
+        :param qkv: an [N x T x x (3 * H * C)] tensor of Qs, Ks, and Vs.
+        :return: an [N x T x (H * C)] tensor after attention.
         """
-        bs, width, length = qkv.shape
-        assert width % (3 * self.n_heads) == 0
-        ch = width // (3 * self.n_heads)
-        q, k, v = jnp.split(qkv, 3, axis=1)
+        bs, length, n_channels = qkv.shape
+        assert n_channels % (3 * self.n_heads) == 0
+        ch = n_channels // (3 * self.n_heads)
+        q, k, v = jnp.split(qkv, 3, axis=-1)
         scale = 1 / math.sqrt(math.sqrt(ch))
-        weight = jnp.einsum(
-            "bct,bcs->bts",
-            (q * scale).reshape(bs * self.n_heads, ch, length),
-            (k * scale).reshape(bs * self.n_heads, ch, length),
-        )  # More stable with f16 than dividing afterwards
+        # (N, T, H*C) -> (N, H*C, T) -> (N*H, C, T)
+        q, k, v = [
+            jnp.moveaxis(u, -1, -2).reshape(bs * self.n_heads, ch, length)
+            for u in [q, k, v]
+        ]
+        weight = jnp.einsum("bct,bcs->bts", q * scale, k * scale)  # More stable with f16 than dividing afterwards
         weight = nnx.softmax(weight.astype(jnp.float32), axis=-1).astype(weight.dtype)
-        a = jnp.einsum(
-            "bts,bcs->bct", weight, v.reshape(bs * self.n_heads, ch, length)
-        )
-        return a.reshape(bs, -1, length)
+        out = jnp.einsum("bts,bcs->bct", weight, v)
+        out = out.reshape(bs, -1, length)   # (N*H, C, T) -> (N, H*C, T)
+        out = jnp.moveaxis(out, -1, -2)      # (N, H*C, T) -> (N, T, H*C)
+        return out
 
 
+# def conv_nchw(*args, **kwargs):
+#     # test with: conv_nchw(x, self.conv.kernel, (1, 1), padding=[(1, 1), (1,1)])
+#     kwargs["dimension_numbers"] = ('NCHW', 'HWOI', 'NCHW')
+#     return jax.lax.conv_general_dilated(*args, **kwargs)
 
+
+# def ConvNCHW(*args, **kwargs):
+#     """
+#     Create an nnx.Conv layer that works with images in NCHW format (PyTorch-compatible)
+#     """
+#     return nnx.Conv(*args, **kwargs, conv_general_dilated=conv_nchw)
 
 
 class AttentionPool2d(nnx.Module):
@@ -142,8 +154,9 @@ class AttentionPool2d(nnx.Module):
         output_dim: int = None,
         rngs: nnx.Rngs = nnx.Rngs(0)
     ):
+        # note: the order of HW and C dimensions is swapped compared to PyTorch impl
         self.positional_embedding = nnx.Param(
-            jax.random.normal(rngs(), (embed_dim, spacial_dim**2 + 1)) / embed_dim**0.5
+            jax.random.normal(rngs(), (spacial_dim**2 + 1, embed_dim)) / embed_dim**0.5
         )
         # self.qkv_proj = conv_nd(in_embed_dim, 3 * embed_dim, 1)
         self.qkv_proj = nnx.Conv(
@@ -156,19 +169,34 @@ class AttentionPool2d(nnx.Module):
         self.num_heads = embed_dim // num_heads_channels
         self.attention = QKVAttention(self.num_heads)
 
+    # def __call__(self, x):
+    #     b, c, *_spatial = x.shape
+    #     x = x.reshape(b, c, -1)  # NC(HW)
+    #     x = jnp.concatenate([x.mean(axis=-1, keepdims=True), x], axis=-1)  # NC(HW+1)
+    #     x = x + self.positional_embedding[None, :, :].astype(x.dtype)  # NC(HW+1)
+    #     # x = jnp.moveaxis(x, -1, -2)   # N(HW+1)C - needed for nnx.Conv
+    #     x = self.qkv_proj(x)
+    #     # x = jnp.moveaxis(x, -1, -2)   # NC(HW+1) - revert for consistency with PyTotch impl
+    #     x = self.attention(x)
+    #     # x = jnp.moveaxis(x, -1, -2)   # N(HW+1)C - needed for nnx.Conv
+    #     x = self.c_proj(x)
+    #     # x = jnp.moveaxis(x, -1, -2)   # NC(HW+1) - revert for consistency with PyTotch impl
+    #     return x[:, :, 0]
+
     def __call__(self, x):
-        b, c, *_spatial = x.shape
-        x = x.reshape(b, c, -1)  # NC(HW)
-        x = jnp.concatenate([x.mean(axis=-1, keepdims=True), x], axis=-1)  # NC(HW+1)
+        b, *_spatial, c = x.shape
+        x = x.reshape(b, -1, c)  # N(HW)C
+        x = jnp.concatenate([x.mean(axis=-2, keepdims=True), x], axis=-2)  # N(HW+1)C
         x = x + self.positional_embedding[None, :, :].astype(x.dtype)  # NC(HW+1)
-        x = jnp.moveaxis(x, -1, -2)   # N(HW+1)C - needed for nnx.Conv
+        # x = jnp.moveaxis(x, -1, -2)   # N(HW+1)C - needed for nnx.Conv
         x = self.qkv_proj(x)
-        x = jnp.moveaxis(x, -1, -2)   # NC(HW+1) - revert for consistency with PyTotch impl
+        # x = jnp.moveaxis(x, -1, -2)   # NC(HW+1) - revert for consistency with PyTotch impl
         x = self.attention(x)
-        x = jnp.moveaxis(x, -1, -2)   # N(HW+1)C - needed for nnx.Conv
+        # x = jnp.moveaxis(x, -1, -2)   # N(HW+1)C - needed for nnx.Conv
         x = self.c_proj(x)
-        x = jnp.moveaxis(x, -1, -2)   # NC(HW+1) - revert for consistency with PyTotch impl
+        # x = jnp.moveaxis(x, -1, -2)   # NC(HW+1) - revert for consistency with PyTotch impl
         return x[:, :, 0]
+
 
 
 def main():
@@ -178,66 +206,90 @@ def main():
     output_dim = None
     rngs = nnx.Rngs(0)
     self = AttentionPool2d(spacial_dim, embed_dim, num_heads_channels, output_dim, rngs)
-    x = jax.random.normal(rngs(), (5, embed_dim, spacial_dim, spacial_dim))
+    x = jax.random.normal(rngs(), (5, spacial_dim, spacial_dim, embed_dim))
+    y = self(x)
+
+    self = self.attention
+
+
+
+class TimestepBlock(nnx.Module):
+    """
+    Any module where forward() takes timestep embeddings as a second argument.
+    """
+
+    @abstractmethod
+    def __call__(self, x, emb):
+        """
+        Apply the module to `x` given `emb` timestep embeddings.
+        """
+
+
+class TimestepEmbedSequential(nnx.Sequential, TimestepBlock):
+    """
+    A sequential module that passes timestep embeddings to the children that
+    support it as an extra input.
+    """
+
+    def __call__(self, x, emb):
+        for layer in self:
+            if isinstance(layer, TimestepBlock):
+                x = layer(x, emb)
+            else:
+                x = layer(x)
+        return x
+
+
+class Upsample(nnx.Module):
+    """
+    An upsampling layer with an optional convolution.
+    :param channels: channels in the inputs and outputs.
+    :param use_conv: a bool determining if a convolution is applied.
+    :param dims: determines if the signal is 1D, 2D, or 3D. If 3D, then
+                 upsampling occurs in the inner-two dimensions.
+    """
+
+    def __init__(self, channels, use_conv, dims=2, out_channels=None, rngs: nnx.Rngs = nnx.Rngs(0)):
+        super().__init__()
+        self.channels = channels
+        self.out_channels = out_channels or channels
+        self.use_conv = use_conv
+        self.dims = dims
+        if use_conv:
+            self.conv = ConvNCHW(
+                self.channels, self.out_channels, (3,) * dims, padding=1, rngs=rngs,
+            )
+
+    def __call__(self, x):
+        assert x.shape[1] == self.channels
+        if self.dims == 3:
+            # x = F.interpolate(
+            #     x, (x.shape[2], x.shape[3] * 2, x.shape[4] * 2), mode="nearest"
+            # )
+            x = jax.image.resize(
+                x,
+                (x.shape[0], x.shape[1], x.shape[2], x.shape[3] * 2, x.shape[4] * 2),
+                method="nearest"
+            )
+        else:
+            spatial_dim_idx = x.ndim - self.dims
+            s = x.shape
+            new_shape = [2 * s[i] if i >= spatial_dim_idx else s[i] for i in range(len(s))]
+            x = jax.image.resize(x, new_shape, method="nearest")
+        if self.use_conv:
+            x = self.conv(x)
+        return x
+
+
+def main():
+    spatial_dim = 8
+    embed_dim = 4
+    rngs = nnx.Rngs(0)
+    self = Upsample(4, True, rngs=rngs)
+    x = jax.random.normal(rngs(), (5, embed_dim, spatial_dim, spatial_dim))
     y = self(x)
 
 
-# class TimestepBlock(nn.Module):
-#     """
-#     Any module where forward() takes timestep embeddings as a second argument.
-#     """
-
-#     @abstractmethod
-#     def forward(self, x, emb):
-#         """
-#         Apply the module to `x` given `emb` timestep embeddings.
-#         """
-
-
-# class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
-#     """
-#     A sequential module that passes timestep embeddings to the children that
-#     support it as an extra input.
-#     """
-
-#     def forward(self, x, emb):
-#         for layer in self:
-#             if isinstance(layer, TimestepBlock):
-#                 x = layer(x, emb)
-#             else:
-#                 x = layer(x)
-#         return x
-
-
-# class Upsample(nn.Module):
-#     """
-#     An upsampling layer with an optional convolution.
-#     :param channels: channels in the inputs and outputs.
-#     :param use_conv: a bool determining if a convolution is applied.
-#     :param dims: determines if the signal is 1D, 2D, or 3D. If 3D, then
-#                  upsampling occurs in the inner-two dimensions.
-#     """
-
-#     def __init__(self, channels, use_conv, dims=2, out_channels=None):
-#         super().__init__()
-#         self.channels = channels
-#         self.out_channels = out_channels or channels
-#         self.use_conv = use_conv
-#         self.dims = dims
-#         if use_conv:
-#             self.conv = conv_nd(dims, self.channels, self.out_channels, 3, padding=1)
-
-#     def forward(self, x):
-#         assert x.shape[1] == self.channels
-#         if self.dims == 3:
-#             x = F.interpolate(
-#                 x, (x.shape[2], x.shape[3] * 2, x.shape[4] * 2), mode="nearest"
-#             )
-#         else:
-#             x = F.interpolate(x, scale_factor=2, mode="nearest")
-#         if self.use_conv:
-#             x = self.conv(x)
-#         return x
 
 
 # class Downsample(nn.Module):

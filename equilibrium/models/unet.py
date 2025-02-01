@@ -477,6 +477,43 @@ class ResBlock(TimestepBlock):
         return self.skip_connection(x) + h
 
 
+class AttentionBlock(nnx.Module):
+    """
+    An attention block that allows spatial positions to attend to each other.
+    Originally ported from here, but adapted to the N-d case.
+    https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
+    """
+
+    def __init__(
+        self,
+        channels,
+        num_heads=1,
+        num_head_channels=-1,
+        use_checkpoint=False,
+        rngs=nnx.Rngs(0)
+    ):
+        self.channels = channels
+        if num_head_channels == -1:
+            self.num_heads = num_heads
+        else:
+            assert (
+                channels % num_head_channels == 0
+            ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
+            self.num_heads = channels // num_head_channels
+        self.use_checkpoint = use_checkpoint
+        self.norm = GroupNorm32(num_features=channels, num_groups=channels, rngs=rngs)
+        self.qkv = nnx.Conv(channels, channels * 3, (1,), rngs=rngs)
+        self.attention = QKVAttention(self.num_heads)
+        self.proj_out = zero_module(nnx.Conv(channels, channels, (1,), rngs=rngs))
+
+    def __call__(self, x):
+        b, *spatial, c = x.shape
+        x = x.reshape(b, -1, c)
+        qkv = self.qkv(self.norm(x))
+        h = self.attention(qkv)
+        h = self.proj_out(h)
+        return (x + h).reshape(b, *spatial, c)
+
 
 
 def main():
@@ -494,64 +531,12 @@ def main():
     down=False
     emb_off=False
     rngs = nnx.Rngs(0)
-    self = ResBlock(channels, emb_channels, dropout, use_conv=True, rngs=rngs)
+    # self = ResBlock(channels, emb_channels, dropout, use_conv=True, rngs=rngs)
+    self = AttentionBlock(channels, rngs=rngs)
     x = jax.random.normal(rngs(), (5, spatial_dim, spatial_dim, embed_dim, ))
     emb = jax.random.normal(rngs(), (5, emb_channels))
-    y = self(x, emb)
-    y = nnx.jit(self.__call__)(x, emb)
-
-
-# class AttentionBlock(nn.Module):
-#     """
-#     An attention block that allows spatial positions to attend to each other.
-#     Originally ported from here, but adapted to the N-d case.
-#     https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
-#     """
-
-#     def __init__(
-#         self,
-#         channels,
-#         num_heads=1,
-#         num_head_channels=-1,
-#         use_checkpoint=False,
-#         use_new_attention_order=False,
-#     ):
-#         super().__init__()
-#         self.channels = channels
-#         if num_head_channels == -1:
-#             self.num_heads = num_heads
-#         else:
-#             assert (
-#                 channels % num_head_channels == 0
-#             ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
-#             self.num_heads = channels // num_head_channels
-#         self.use_checkpoint = use_checkpoint
-#         self.norm = normalization(channels)
-#         self.qkv = conv_nd(1, channels, channels * 3, 1)
-#         if use_new_attention_order:
-#             # split qkv before split heads
-#             self.attention = QKVAttention(self.num_heads)
-#         else:
-#             # split heads before split qkv
-#             self.attention = QKVAttentionLegacy(self.num_heads)
-
-#         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
-
-#     def forward(self, x):
-#         return checkpoint(
-#             self._forward,
-#             (x,),
-#             self.parameters(),
-#             self.use_checkpoint and self.training,
-#         )
-
-#     def _forward(self, x):
-#         b, c, *spatial = x.shape
-#         x = x.reshape(b, c, -1)
-#         qkv = self.qkv(self.norm(x))
-#         h = self.attention(qkv)
-#         h = self.proj_out(h)
-#         return (x + h).reshape(b, c, *spatial)
+    y = self(x)
+    y = nnx.jit(self.__call__)(x)
 
 
 

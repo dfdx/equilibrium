@@ -59,6 +59,19 @@ def zero_module(module: nnx.Module) -> nnx.Module:
     return module
 
 
+
+def spatial_dims(array_ndim: int, n_spatial_dims: int):
+    """
+    Return indices of spatial dimensions.
+
+    Example:
+
+        x = jax.random.normal(rngs(), (8, 16, 16, 3))   # 2D image in NHWC format
+        dims = 2   # number of spatial dimensions (H and W)
+        spatial_dims(x.ndim, dims)   # ==> [1, 2]
+    """
+    return list(range(array_ndim - n_spatial_dims - 1, array_ndim - 1))
+
 ###############################################################################
 #                                 Attention                                   #
 ###############################################################################
@@ -296,15 +309,13 @@ class Upsample(nnx.Module):
         return x
 
 
-def main():
-    spatial_dim = 8
-    embed_dim = 4
-    rngs = nnx.Rngs(0)
-    self = Upsample(4, True, rngs=rngs)
-    x = jax.random.normal(rngs(), (5, spatial_dim, spatial_dim, embed_dim, ))
-    y = self(x)
-
-
+# def main():
+#     spatial_dim = 8
+#     embed_dim = 4
+#     rngs = nnx.Rngs(0)
+#     self = Upsample(4, True, rngs=rngs)
+#     x = jax.random.normal(rngs(), (5, spatial_dim, spatial_dim, embed_dim, ))
+#     y = self(x)
 
 
 class Downsample(nnx.Module):
@@ -339,26 +350,6 @@ class Downsample(nnx.Module):
 
 
 
-def main():
-    spatial_dim = 8
-    embed_dim = 4
-    channels = embed_dim
-    emb_channels = 2
-    dropout = 0.5
-    out_channels=None
-    use_conv=False
-    use_scale_shift_norm=False
-    dims=2
-    use_checkpoint=False
-    up=False
-    down=False
-    emb_off=False
-    rngs = nnx.Rngs(0)
-    self = ResBlock(channels, emb_channels, dropout, use_conv=True, rngs=rngs)
-    x = jax.random.normal(rngs(), (5, spatial_dim, spatial_dim, embed_dim, ))
-    y = self(x)
-
-
 class ResBlock(TimestepBlock):
     """
     A residual block that can optionally change the number of channels.
@@ -388,8 +379,10 @@ class ResBlock(TimestepBlock):
         up=False,
         down=False,
         emb_off=False,
+        deterministic=False,
         rngs=nnx.Rngs(0)
     ):
+        self.dims = dims
         self.channels = channels
         self.emb_channels = emb_channels
         self.dropout = dropout
@@ -433,9 +426,9 @@ class ResBlock(TimestepBlock):
             )
 
         self.out_layers = nnx.Sequential(
-            GroupNorm32(self.out_channels, self.out_channels),
+            GroupNorm32(self.out_channels, self.out_channels, rngs=rngs),
             nnx.silu,
-            nnx.Dropout(p=dropout),
+            nnx.Dropout(dropout, rngs=rngs, deterministic=deterministic),
             zero_module(
                 nnx.Conv(self.out_channels, self.out_channels, (3,) * dims, padding=1, rngs=rngs)
             ),
@@ -453,30 +446,59 @@ class ResBlock(TimestepBlock):
     def __call__(self, x, emb):
         """
         Apply the block to a Tensor, conditioned on a timestep embedding.
-        :param x: an [N x C x ...] Tensor of features.
+        :param x: an [N x ... x C ] Tensor of features.
         :param emb: an [N x emb_channels] Tensor of timestep embeddings.
-        :return: an [N x C x ...] Tensor of outputs.
+        :return: an [N x ... x C] Tensor of outputs.
         """
         if self.updown:
-            in_rest, in_conv = self.in_layers[:-1], self.in_layers[-1]
-            h = in_rest(x)
+            in_rest, in_conv = self.in_layers.layers[:-1], self.in_layers.layers[-1]
+            h = x
+            for layer in in_rest:
+                h = layer(x)
             h = self.h_upd(h)
             x = self.x_upd(x)
             h = in_conv(h)
         else:
             h = self.in_layers(x)
-        emb_out = self.emb_layers(emb).type(h.dtype)
-        while len(emb_out.shape) < len(h.shape):
-            emb_out = emb_out[..., None]
+        emb_out = self.emb_layers(emb).astype(h.dtype)
+        ## TODO: is it jit-compilable? alternative would be
+        emb_out = jnp.expand_dims(emb_out, spatial_dims(h.ndim, self.dims))
+        # while len(emb_out.shape) < len(h.shape):
+        #     emb_out = emb_out[..., None, :]
         if self.use_scale_shift_norm:
-            out_norm, out_rest = self.out_layers[0], self.out_layers[1:]
-            scale, shift = torch.chunk(emb_out, 2, dim=1)
-            h = out_norm(h) * (1 + scale) + shift
-            h = out_rest(h)
+            raise Exception("use_scale_shift_norm=True is not yet supported")
+            # out_norm, out_rest = self.out_layers[0], self.out_layers[1:]
+            # scale, shift = torch.chunk(emb_out, 2, dim=1)
+            # h = out_norm(h) * (1 + scale) + shift
+            # h = out_rest(h)
         else:
             h = h + emb_out
             h = self.out_layers(h)
         return self.skip_connection(x) + h
+
+
+
+
+def main():
+    spatial_dim = 64
+    embed_dim = 16
+    channels = embed_dim
+    emb_channels = 8
+    dropout = 0.5
+    out_channels=None
+    use_conv=False
+    use_scale_shift_norm=False
+    dims=2
+    use_checkpoint=False
+    up=False
+    down=False
+    emb_off=False
+    rngs = nnx.Rngs(0)
+    self = ResBlock(channels, emb_channels, dropout, use_conv=True, rngs=rngs)
+    x = jax.random.normal(rngs(), (5, spatial_dim, spatial_dim, embed_dim, ))
+    emb = jax.random.normal(rngs(), (5, emb_channels))
+    y = self(x, emb)
+    y = nnx.jit(self.__call__)(x, emb)
 
 
 # class AttentionBlock(nn.Module):

@@ -41,6 +41,23 @@ class ConstantEmbedding(nnx.Module):
         return self.embedding_table.repeat(emb.shape[0], 1)
 
 
+#######
+
+class GroupNorm32(nnx.GroupNorm):
+    def __call__(self, x):
+        return super().__call__(x.astype(jnp.float32)).astype(x.dtype)
+
+
+def zero_module(module: nnx.Module) -> nnx.Module:
+    """
+    Zero out all parameters of a module.
+    This assumes you can extract and update the module's parameter pytree.
+    """
+    params = nnx.state(module)
+    zeroed = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), params)
+    nnx.update(module, zeroed)
+    return module
+
 
 ###############################################################################
 #                                 Attention                                   #
@@ -187,15 +204,11 @@ class AttentionPool2d(nnx.Module):
         b, *_spatial, c = x.shape
         x = x.reshape(b, -1, c)  # N(HW)C
         x = jnp.concatenate([x.mean(axis=-2, keepdims=True), x], axis=-2)  # N(HW+1)C
-        x = x + self.positional_embedding[None, :, :].astype(x.dtype)  # NC(HW+1)
-        # x = jnp.moveaxis(x, -1, -2)   # N(HW+1)C - needed for nnx.Conv
-        x = self.qkv_proj(x)
-        # x = jnp.moveaxis(x, -1, -2)   # NC(HW+1) - revert for consistency with PyTotch impl
-        x = self.attention(x)
-        # x = jnp.moveaxis(x, -1, -2)   # N(HW+1)C - needed for nnx.Conv
-        x = self.c_proj(x)
-        # x = jnp.moveaxis(x, -1, -2)   # NC(HW+1) - revert for consistency with PyTotch impl
-        return x[:, :, 0]
+        x = x + self.positional_embedding[None, :, :].astype(x.dtype)  # N(HW+1)C
+        x = self.qkv_proj(x)     # N(HW+1)(3*C)
+        x = self.attention(x)    # N(HW+1)C
+        x = self.c_proj(x)       # N(HW+1)C
+        return x[:, :, 0]        # N(HW+1)
 
 
 
@@ -256,25 +269,27 @@ class Upsample(nnx.Module):
         self.use_conv = use_conv
         self.dims = dims
         if use_conv:
-            self.conv = ConvNCHW(
-                self.channels, self.out_channels, (3,) * dims, padding=1, rngs=rngs,
+            self.conv = nnx.Conv(
+                in_features=self.channels, out_features=self.out_channels,
+                kernel_size=(3,) * dims, padding=1, rngs=rngs,
             )
 
     def __call__(self, x):
-        assert x.shape[1] == self.channels
+        assert x.shape[-1] == self.channels
         if self.dims == 3:
             # x = F.interpolate(
             #     x, (x.shape[2], x.shape[3] * 2, x.shape[4] * 2), mode="nearest"
             # )
             x = jax.image.resize(
                 x,
-                (x.shape[0], x.shape[1], x.shape[2], x.shape[3] * 2, x.shape[4] * 2),
+                (x.shape[0], x.shape[1], x.shape[2] * 2, x.shape[3] * 2, x.shape[4]),
                 method="nearest"
             )
         else:
-            spatial_dim_idx = x.ndim - self.dims
+            # e.g. for NHWC image, spatial dims will be [1, 2]
+            spatial_dims = [x.ndim - d - 2 for d in range(self.dims)]
             s = x.shape
-            new_shape = [2 * s[i] if i >= spatial_dim_idx else s[i] for i in range(len(s))]
+            new_shape = [2 * s[i] if i in spatial_dims else s[i] for i in range(len(s))]
             x = jax.image.resize(x, new_shape, method="nearest")
         if self.use_conv:
             x = self.conv(x)
@@ -286,166 +301,182 @@ def main():
     embed_dim = 4
     rngs = nnx.Rngs(0)
     self = Upsample(4, True, rngs=rngs)
-    x = jax.random.normal(rngs(), (5, embed_dim, spatial_dim, spatial_dim))
+    x = jax.random.normal(rngs(), (5, spatial_dim, spatial_dim, embed_dim, ))
     y = self(x)
 
 
 
 
-# class Downsample(nn.Module):
-#     """
-#     A downsampling layer with an optional convolution.
-#     :param channels: channels in the inputs and outputs.
-#     :param use_conv: a bool determining if a convolution is applied.
-#     :param dims: determines if the signal is 1D, 2D, or 3D. If 3D, then
-#                  downsampling occurs in the inner-two dimensions.
-#     """
+class Downsample(nnx.Module):
+    """
+    A downsampling layer with an optional convolution.
+    :param channels: channels in the inputs and outputs.
+    :param use_conv: a bool determining if a convolution is applied.
+    :param dims: determines if the signal is 1D, 2D, or 3D. If 3D, then
+                 downsampling occurs in the inner-two dimensions.
+    """
 
-#     def __init__(self, channels, use_conv, dims=2, out_channels=None):
-#         super().__init__()
-#         self.channels = channels
-#         self.out_channels = out_channels or channels
-#         self.use_conv = use_conv
-#         self.dims = dims
-#         stride = 2 if dims != 3 else (1, 2, 2)
-#         if use_conv:
-#             self.op = conv_nd(
-#                 dims, self.channels, self.out_channels, 3, stride=stride, padding=1
-#             )
-#         else:
-#             assert self.channels == self.out_channels
-#             self.op = avg_pool_nd(dims, kernel_size=stride, stride=stride)
+    def __init__(self, channels, use_conv, dims=2, out_channels=None, rngs=nnx.Rngs(0)):
+        super().__init__()
+        self.channels = channels
+        self.out_channels = out_channels or channels
+        self.use_conv = use_conv
+        self.dims = dims
+        strides = 2 if dims != 3 else (1, 2, 2)
+        if use_conv:
+            self.op = nnx.Conv(
+                self.channels, self.out_channels, (3,) * dims,
+                strides=strides, padding=1, rngs=rngs
+            )
+        else:
+            assert self.channels == self.out_channels
+            # self.op = avg_pool_nd(dims, kernel_size=stride, stride=stride)
+            self.op = partial(nnx.avg_pool, window_dim=(strides,) * dims, strides=strides)
 
-#     def forward(self, x):
-#         assert x.shape[1] == self.channels
-#         return self.op(x)
+    def __call__(self, x):
+        assert x.shape[-1] == self.channels
+        return self.op(x)
 
 
-# class ResBlock(TimestepBlock):
-#     """
-#     A residual block that can optionally change the number of channels.
-#     :param channels: the number of input channels.
-#     :param emb_channels: the number of timestep embedding channels.
-#     :param dropout: the rate of dropout.
-#     :param out_channels: if specified, the number of out channels.
-#     :param use_conv: if True and out_channels is specified, use a spatial
-#         convolution instead of a smaller 1x1 convolution to change the
-#         channels in the skip connection.
-#     :param dims: determines if the signal is 1D, 2D, or 3D.
-#     :param use_checkpoint: if True, use gradient checkpointing on this module.
-#     :param up: if True, use this block for upsampling.
-#     :param down: if True, use this block for downsampling.
-#     """
 
-#     def __init__(
-#         self,
-#         channels,
-#         emb_channels,
-#         dropout,
-#         out_channels=None,
-#         use_conv=False,
-#         use_scale_shift_norm=False,
-#         dims=2,
-#         use_checkpoint=False,
-#         up=False,
-#         down=False,
-#         emb_off=False,
-#     ):
-#         super().__init__()
-#         self.channels = channels
-#         self.emb_channels = emb_channels
-#         self.dropout = dropout
-#         self.out_channels = out_channels or channels
-#         self.use_conv = use_conv
-#         self.use_checkpoint = use_checkpoint
-#         self.use_scale_shift_norm = use_scale_shift_norm
+def main():
+    spatial_dim = 8
+    embed_dim = 4
+    channels = embed_dim
+    emb_channels = 2
+    dropout = 0.5
+    out_channels=None
+    use_conv=False
+    use_scale_shift_norm=False
+    dims=2
+    use_checkpoint=False
+    up=False
+    down=False
+    emb_off=False
+    rngs = nnx.Rngs(0)
+    self = ResBlock(channels, emb_channels, dropout, use_conv=True, rngs=rngs)
+    x = jax.random.normal(rngs(), (5, spatial_dim, spatial_dim, embed_dim, ))
+    y = self(x)
 
-#         self.in_layers = nn.Sequential(
-#             normalization(channels),
-#             nn.SiLU(),
-#             conv_nd(dims, channels, self.out_channels, 3, padding=1),
-#         )
 
-#         self.updown = up or down
+class ResBlock(TimestepBlock):
+    """
+    A residual block that can optionally change the number of channels.
+    :param channels: the number of input channels.
+    :param emb_channels: the number of timestep embedding channels.
+    :param dropout: the rate of dropout.
+    :param out_channels: if specified, the number of out channels.
+    :param use_conv: if True and out_channels is specified, use a spatial
+        convolution instead of a smaller 1x1 convolution to change the
+        channels in the skip connection.
+    :param dims: determines if the signal is 1D, 2D, or 3D.
+    :param use_checkpoint: if True, use gradient checkpointing on this module.
+    :param up: if True, use this block for upsampling.
+    :param down: if True, use this block for downsampling.
+    """
 
-#         if up:
-#             self.h_upd = Upsample(channels, False, dims)
-#             self.x_upd = Upsample(channels, False, dims)
-#         elif down:
-#             self.h_upd = Downsample(channels, False, dims)
-#             self.x_upd = Downsample(channels, False, dims)
-#         else:
-#             self.h_upd = self.x_upd = nn.Identity()
+    def __init__(
+        self,
+        channels,
+        emb_channels,
+        dropout,
+        out_channels=None,
+        use_conv=False,
+        use_scale_shift_norm=False,
+        dims=2,
+        use_checkpoint=False,
+        up=False,
+        down=False,
+        emb_off=False,
+        rngs=nnx.Rngs(0)
+    ):
+        self.channels = channels
+        self.emb_channels = emb_channels
+        self.dropout = dropout
+        self.out_channels = out_channels or channels
+        self.use_conv = use_conv
+        self.use_checkpoint = use_checkpoint
+        self.use_scale_shift_norm = use_scale_shift_norm
 
-#         if emb_off:
-#             self.emb_layers = ConstantEmbedding(
-#                 emb_channels,
-#                 2 * self.out_channels if use_scale_shift_norm else self.out_channels,
-#             )
-#         else:
-#             self.emb_layers = nn.Sequential(
-#                 nn.SiLU(),
-#                 linear(
-#                     emb_channels,
-#                     2 * self.out_channels
-#                     if use_scale_shift_norm
-#                     else self.out_channels,
-#                 ),
-#             )
+        self.in_layers = nnx.Sequential(
+            GroupNorm32(num_features=channels, num_groups=channels, rngs=rngs),
+            nnx.silu,
+            nnx.Conv(channels, self.out_channels, (3,) * dims, padding=1, rngs=rngs),
+        )
 
-#         self.out_layers = nn.Sequential(
-#             normalization(self.out_channels),
-#             nn.SiLU(),
-#             nn.Dropout(p=dropout),
-#             zero_module(
-#                 conv_nd(dims, self.out_channels, self.out_channels, 3, padding=1)
-#             ),
-#         )
+        self.updown = up or down
 
-#         if self.out_channels == channels:
-#             self.skip_connection = nn.Identity()
-#         elif use_conv:
-#             self.skip_connection = conv_nd(
-#                 dims, channels, self.out_channels, 3, padding=1
-#             )
-#         else:
-#             self.skip_connection = conv_nd(dims, channels, self.out_channels, 1)
+        if up:
+            self.h_upd = Upsample(channels, False, dims)
+            self.x_upd = Upsample(channels, False, dims)
+        elif down:
+            self.h_upd = Downsample(channels, False, dims)
+            self.x_upd = Downsample(channels, False, dims)
+        else:
+            self.h_upd = self.x_upd = lambda x: x
 
-#     def forward(self, x, emb):
-#         """
-#         Apply the block to a Tensor, conditioned on a timestep embedding.
-#         :param x: an [N x C x ...] Tensor of features.
-#         :param emb: an [N x emb_channels] Tensor of timestep embeddings.
-#         :return: an [N x C x ...] Tensor of outputs.
-#         """
-#         return checkpoint(
-#             self._forward,
-#             (x, emb),
-#             self.parameters(),
-#             self.use_checkpoint and self.training,
-#         )
+        if emb_off:
+            self.emb_layers = ConstantEmbedding(
+                emb_channels,
+                2 * self.out_channels if use_scale_shift_norm else self.out_channels,
+            )
+        else:
+            self.emb_layers = nnx.Sequential(
+                nnx.silu,
+                nnx.Linear(
+                    emb_channels,
+                    2 * self.out_channels
+                    if use_scale_shift_norm
+                    else self.out_channels,
+                    rngs=rngs
+                ),
+            )
 
-#     def _forward(self, x, emb):
-#         if self.updown:
-#             in_rest, in_conv = self.in_layers[:-1], self.in_layers[-1]
-#             h = in_rest(x)
-#             h = self.h_upd(h)
-#             x = self.x_upd(x)
-#             h = in_conv(h)
-#         else:
-#             h = self.in_layers(x)
-#         emb_out = self.emb_layers(emb).type(h.dtype)
-#         while len(emb_out.shape) < len(h.shape):
-#             emb_out = emb_out[..., None]
-#         if self.use_scale_shift_norm:
-#             out_norm, out_rest = self.out_layers[0], self.out_layers[1:]
-#             scale, shift = torch.chunk(emb_out, 2, dim=1)
-#             h = out_norm(h) * (1 + scale) + shift
-#             h = out_rest(h)
-#         else:
-#             h = h + emb_out
-#             h = self.out_layers(h)
-#         return self.skip_connection(x) + h
+        self.out_layers = nnx.Sequential(
+            GroupNorm32(self.out_channels, self.out_channels),
+            nnx.silu,
+            nnx.Dropout(p=dropout),
+            zero_module(
+                nnx.Conv(self.out_channels, self.out_channels, (3,) * dims, padding=1, rngs=rngs)
+            ),
+        )
+
+        if self.out_channels == channels:
+            self.skip_connection = lambda x: x
+        elif use_conv:
+            self.skip_connection = nnx.Conv(
+                channels, self.out_channels, (3,) * dims, padding=1, rngs=rngs
+            )
+        else:
+            self.skip_connection = nnx.Conv(channels, self.out_channels, (1,) * dims, rngs=rngs)
+
+    def __call__(self, x, emb):
+        """
+        Apply the block to a Tensor, conditioned on a timestep embedding.
+        :param x: an [N x C x ...] Tensor of features.
+        :param emb: an [N x emb_channels] Tensor of timestep embeddings.
+        :return: an [N x C x ...] Tensor of outputs.
+        """
+        if self.updown:
+            in_rest, in_conv = self.in_layers[:-1], self.in_layers[-1]
+            h = in_rest(x)
+            h = self.h_upd(h)
+            x = self.x_upd(x)
+            h = in_conv(h)
+        else:
+            h = self.in_layers(x)
+        emb_out = self.emb_layers(emb).type(h.dtype)
+        while len(emb_out.shape) < len(h.shape):
+            emb_out = emb_out[..., None]
+        if self.use_scale_shift_norm:
+            out_norm, out_rest = self.out_layers[0], self.out_layers[1:]
+            scale, shift = torch.chunk(emb_out, 2, dim=1)
+            h = out_norm(h) * (1 + scale) + shift
+            h = out_rest(h)
+        else:
+            h = h + emb_out
+            h = self.out_layers(h)
+        return self.skip_connection(x) + h
 
 
 # class AttentionBlock(nn.Module):

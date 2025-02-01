@@ -13,35 +13,13 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
-# from models.nn import (
-#     avg_pool_nd,
-#     checkpoint,
-#     conv_nd,
-#     linear,
-#     normalization,
-#     timestep_embedding,
-#     zero_module,
-# )
-
-## nn
+from equilibrium.models.embeddings import timestep_embedding
 
 
 ###############################################################################
-#                                Embeddings                                   #
+#                                  Utils                                      #
 ###############################################################################
 
-class ConstantEmbedding(nnx.Module):
-    def __init__(self, in_channels, out_channels, dtype=jnp.float32, rngs: nnx.Rngs = nnx.Rngs(0)):
-        scale = in_channels**0.5
-        initializer = nnx.initializers.uniform(2 * scale, dtype=dtype)
-        data = initializer(rngs(), (1, out_channels)) - scale
-        self.embedding_table = nnx.Param(data)
-
-    def __call__(self, emb):
-        return self.embedding_table.repeat(emb.shape[0], 1)
-
-
-#######
 
 class GroupNorm32(nnx.GroupNorm):
     def __call__(self, x):
@@ -59,7 +37,6 @@ def zero_module(module: nnx.Module) -> nnx.Module:
     return module
 
 
-
 def spatial_dims(array_ndim: int, n_spatial_dims: int):
     """
     Return indices of spatial dimensions.
@@ -72,61 +49,25 @@ def spatial_dims(array_ndim: int, n_spatial_dims: int):
     """
     return list(range(array_ndim - n_spatial_dims - 1, array_ndim - 1))
 
+
+###############################################################################
+#                                Embeddings                                   #
+###############################################################################
+
+class ConstantEmbedding(nnx.Module):
+    def __init__(self, in_channels, out_channels, *, dtype=jnp.float32, rngs: nnx.Rngs):
+        scale = in_channels**0.5
+        initializer = nnx.initializers.uniform(2 * scale, dtype=dtype)
+        data = initializer(rngs(), (1, out_channels)) - scale
+        self.embedding_table = nnx.Param(data)
+
+    def __call__(self, emb):
+        return self.embedding_table.repeat(emb.shape[0], 1)
+
+
 ###############################################################################
 #                                 Attention                                   #
 ###############################################################################
-
-
-# def count_flops_attn(model, _x, y):
-#     """
-#     A counter for the `thop` package to count the operations in an
-#     attention operation.
-#     Meant to be used like:
-#         macs, params = thop.profile(
-#             model,
-#             inputs=(inputs, timestamps),
-#             custom_ops={QKVAttention: QKVAttention.count_flops},
-#         )
-#     """
-#     b, c, *spatial = y[0].shape
-#     num_spatial = int(np.prod(spatial))
-#     # We perform two matmuls with the same number of ops.
-#     # The first computes the weight matrix, the second computes
-#     # the combination of the value vectors.
-#     matmul_ops = 2 * b * (num_spatial**2) * c
-#     model.total_ops += torch.DoubleTensor([matmul_ops])
-
-
-# class QKVAttentionLegacy(nn.Module):
-#     """
-#     A module which performs QKV attention. Matches legacy QKVAttention + input/ouput heads shaping
-#     """
-
-#     def __init__(self, n_heads):
-#         super().__init__()
-#         self.n_heads = n_heads
-
-#     def forward(self, qkv):
-#         """
-#         Apply QKV attention.
-#         :param qkv: an [N x (H * 3 * C) x T] tensor of Qs, Ks, and Vs.
-#         :return: an [N x (H * C) x T] tensor after attention.
-#         """
-#         bs, width, length = qkv.shape
-#         assert width % (3 * self.n_heads) == 0
-#         ch = width // (3 * self.n_heads)
-#         q, k, v = qkv.reshape(bs * self.n_heads, ch * 3, length).split(ch, dim=1)
-#         scale = 1 / math.sqrt(math.sqrt(ch))
-#         weight = torch.einsum(
-#             "bct,bcs->bts", q * scale, k * scale
-#         )  # More stable with f16 than dividing afterwards
-#         weight = torch.softmax(weight.float(), dim=-1).type(weight.dtype)
-#         a = torch.einsum("bts,bcs->bct", weight, v)
-#         return a.reshape(bs, -1, length)
-
-#     @staticmethod
-#     def count_flops(model, _x, y):
-#         return count_flops_attn(model, _x, y)
 
 
 class QKVAttention(nnx.Module):
@@ -161,19 +102,6 @@ class QKVAttention(nnx.Module):
         return out
 
 
-# def conv_nchw(*args, **kwargs):
-#     # test with: conv_nchw(x, self.conv.kernel, (1, 1), padding=[(1, 1), (1,1)])
-#     kwargs["dimension_numbers"] = ('NCHW', 'HWOI', 'NCHW')
-#     return jax.lax.conv_general_dilated(*args, **kwargs)
-
-
-# def ConvNCHW(*args, **kwargs):
-#     """
-#     Create an nnx.Conv layer that works with images in NCHW format (PyTorch-compatible)
-#     """
-#     return nnx.Conv(*args, **kwargs, conv_general_dilated=conv_nchw)
-
-
 class AttentionPool2d(nnx.Module):
 
     def __init__(
@@ -181,8 +109,9 @@ class AttentionPool2d(nnx.Module):
         spacial_dim: int,
         embed_dim: int,
         num_heads_channels: int,
+        *,
         output_dim: int = None,
-        rngs: nnx.Rngs = nnx.Rngs(0)
+        rngs: nnx.Rngs
     ):
         # note: the order of HW and C dimensions is swapped compared to PyTorch impl
         self.positional_embedding = nnx.Param(
@@ -199,20 +128,6 @@ class AttentionPool2d(nnx.Module):
         self.num_heads = embed_dim // num_heads_channels
         self.attention = QKVAttention(self.num_heads)
 
-    # def __call__(self, x):
-    #     b, c, *_spatial = x.shape
-    #     x = x.reshape(b, c, -1)  # NC(HW)
-    #     x = jnp.concatenate([x.mean(axis=-1, keepdims=True), x], axis=-1)  # NC(HW+1)
-    #     x = x + self.positional_embedding[None, :, :].astype(x.dtype)  # NC(HW+1)
-    #     # x = jnp.moveaxis(x, -1, -2)   # N(HW+1)C - needed for nnx.Conv
-    #     x = self.qkv_proj(x)
-    #     # x = jnp.moveaxis(x, -1, -2)   # NC(HW+1) - revert for consistency with PyTotch impl
-    #     x = self.attention(x)
-    #     # x = jnp.moveaxis(x, -1, -2)   # N(HW+1)C - needed for nnx.Conv
-    #     x = self.c_proj(x)
-    #     # x = jnp.moveaxis(x, -1, -2)   # NC(HW+1) - revert for consistency with PyTotch impl
-    #     return x[:, :, 0]
-
     def __call__(self, x):
         b, *_spatial, c = x.shape
         x = x.reshape(b, -1, c)  # N(HW)C
@@ -224,19 +139,48 @@ class AttentionPool2d(nnx.Module):
         return x[:, :, 0]        # N(HW+1)
 
 
+class AttentionBlock(nnx.Module):
+    """
+    An attention block that allows spatial positions to attend to each other.
+    Originally ported from here, but adapted to the N-d case.
+    https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
+    """
 
-def main():
-    spacial_dim = 8
-    embed_dim = 4
-    num_heads_channels = 2
-    output_dim = None
-    rngs = nnx.Rngs(0)
-    self = AttentionPool2d(spacial_dim, embed_dim, num_heads_channels, output_dim, rngs)
-    x = jax.random.normal(rngs(), (5, spacial_dim, spacial_dim, embed_dim))
-    y = self(x)
+    def __init__(
+        self,
+        channels,
+        *,
+        num_heads=1,
+        num_head_channels=-1,
+        use_checkpoint=False,
+        rngs: nnx.Rngs
+    ):
+        self.channels = channels
+        if num_head_channels == -1:
+            self.num_heads = num_heads
+        else:
+            assert (
+                channels % num_head_channels == 0
+            ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
+            self.num_heads = channels // num_head_channels
+        self.use_checkpoint = use_checkpoint
+        self.norm = GroupNorm32(num_features=channels, num_groups=channels, rngs=rngs)
+        self.qkv = nnx.Conv(channels, channels * 3, (1,), rngs=rngs)
+        self.attention = QKVAttention(self.num_heads)
+        self.proj_out = zero_module(nnx.Conv(channels, channels, (1,), rngs=rngs))
 
-    self = self.attention
+    def __call__(self, x):
+        b, *spatial, c = x.shape
+        x = x.reshape(b, -1, c)
+        qkv = self.qkv(self.norm(x))
+        h = self.attention(qkv)
+        h = self.proj_out(h)
+        return (x + h).reshape(b, *spatial, c)
 
+
+###############################################################################
+#                            Timestep Utils                                   #
+###############################################################################
 
 
 class TimestepBlock(nnx.Module):
@@ -258,12 +202,17 @@ class TimestepEmbedSequential(nnx.Sequential, TimestepBlock):
     """
 
     def __call__(self, x, emb):
-        for layer in self:
+        for layer in self.layers:
             if isinstance(layer, TimestepBlock):
                 x = layer(x, emb)
             else:
                 x = layer(x)
         return x
+
+
+###############################################################################
+#                              Unet Core Modules                              #
+###############################################################################
 
 
 class Upsample(nnx.Module):
@@ -275,7 +224,7 @@ class Upsample(nnx.Module):
                  upsampling occurs in the inner-two dimensions.
     """
 
-    def __init__(self, channels, use_conv, dims=2, out_channels=None, rngs: nnx.Rngs = nnx.Rngs(0)):
+    def __init__(self, channels, use_conv, dims=2, *, out_channels=None, rngs: nnx.Rngs):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
@@ -290,9 +239,6 @@ class Upsample(nnx.Module):
     def __call__(self, x):
         assert x.shape[-1] == self.channels
         if self.dims == 3:
-            # x = F.interpolate(
-            #     x, (x.shape[2], x.shape[3] * 2, x.shape[4] * 2), mode="nearest"
-            # )
             x = jax.image.resize(
                 x,
                 (x.shape[0], x.shape[1], x.shape[2] * 2, x.shape[3] * 2, x.shape[4]),
@@ -309,15 +255,6 @@ class Upsample(nnx.Module):
         return x
 
 
-# def main():
-#     spatial_dim = 8
-#     embed_dim = 4
-#     rngs = nnx.Rngs(0)
-#     self = Upsample(4, True, rngs=rngs)
-#     x = jax.random.normal(rngs(), (5, spatial_dim, spatial_dim, embed_dim, ))
-#     y = self(x)
-
-
 class Downsample(nnx.Module):
     """
     A downsampling layer with an optional convolution.
@@ -327,7 +264,7 @@ class Downsample(nnx.Module):
                  downsampling occurs in the inner-two dimensions.
     """
 
-    def __init__(self, channels, use_conv, dims=2, out_channels=None, rngs=nnx.Rngs(0)):
+    def __init__(self, channels, use_conv, dims=2, *, out_channels=None, rngs: nnx.Rngs):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
@@ -341,7 +278,6 @@ class Downsample(nnx.Module):
             )
         else:
             assert self.channels == self.out_channels
-            # self.op = avg_pool_nd(dims, kernel_size=stride, stride=stride)
             self.op = partial(nnx.avg_pool, window_dim=(strides,) * dims, strides=strides)
 
     def __call__(self, x):
@@ -371,6 +307,7 @@ class ResBlock(TimestepBlock):
         channels,
         emb_channels,
         dropout,
+        *,
         out_channels=None,
         use_conv=False,
         use_scale_shift_norm=False,
@@ -380,7 +317,7 @@ class ResBlock(TimestepBlock):
         down=False,
         emb_off=False,
         deterministic=False,
-        rngs=nnx.Rngs(0)
+        rngs: nnx.Rngs
     ):
         self.dims = dims
         self.channels = channels
@@ -461,10 +398,7 @@ class ResBlock(TimestepBlock):
         else:
             h = self.in_layers(x)
         emb_out = self.emb_layers(emb).astype(h.dtype)
-        ## TODO: is it jit-compilable? alternative would be
         emb_out = jnp.expand_dims(emb_out, spatial_dims(h.ndim, self.dims))
-        # while len(emb_out.shape) < len(h.shape):
-        #     emb_out = emb_out[..., None, :]
         if self.use_scale_shift_norm:
             raise Exception("use_scale_shift_norm=True is not yet supported")
             # out_norm, out_rest = self.out_layers[0], self.out_layers[1:]
@@ -477,351 +411,305 @@ class ResBlock(TimestepBlock):
         return self.skip_connection(x) + h
 
 
-class AttentionBlock(nnx.Module):
+@dataclass(eq=False)
+class UNetModel(nnx.Module):
     """
-    An attention block that allows spatial positions to attend to each other.
-    Originally ported from here, but adapted to the N-d case.
-    https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
+    The full UNet model with attention and timestep embedding.
+    :param in_channels: channels in the input Tensor.
+    :param model_channels: base channel count for the model.
+    :param out_channels: channels in the output Tensor.
+    :param num_res_blocks: number of residual blocks per downsample.
+    :param attention_resolutions: a collection of downsample rates at which
+        attention will take place. May be a set, list, or tuple.
+        For example, if this contains 4, then at 4x downsampling, attention
+        will be used.
+    :param dropout: the dropout probability.
+    :param channel_mult: channel multiplier for each level of the UNet.
+    :param conv_resample: if True, use learned convolutions for upsampling and
+        downsampling.
+    :param dims: determines if the signal is 1D, 2D, or 3D.
+    :param num_classes: if specified (as an int), then this model will be
+        class-conditional with `num_classes` classes.
+    :param use_checkpoint: use gradient checkpointing to reduce memory usage.
+    :param num_heads: the number of attention heads in each attention layer.
+    :param num_heads_channels: if specified, ignore num_heads and instead use
+                               a fixed channel width per attention head.
+    :param num_heads_upsample: works with num_heads to set a different number
+                               of heads for upsampling. Deprecated.
+    :param use_scale_shift_norm: use a FiLM-like conditioning mechanism.
+    :param resblock_updown: use residual blocks for up/downsampling.
+    :param use_new_attention_order: use a different attention pattern for potentially
+                                    increased efficiency.
     """
 
-    def __init__(
-        self,
-        channels,
-        num_heads=1,
-        num_head_channels=-1,
-        use_checkpoint=False,
-        rngs=nnx.Rngs(0)
-    ):
-        self.channels = channels
-        if num_head_channels == -1:
-            self.num_heads = num_heads
+    in_channels: int
+    model_channels: int = 128
+    out_channels: int = 3
+    num_res_blocks: int = 2
+    attention_resolutions: Tuple[int] = (1, 2, 2, 2)
+    dropout: float = 0.0
+    channel_mult: Tuple[int] = (1, 2, 4, 8)
+    conv_resample: bool = True
+    dims: int = 2
+    num_classes: Optional[int] = None
+    use_checkpoint: bool = False
+    num_heads: int = 1
+    num_head_channels: int = -1
+    num_heads_upsample: int = -1
+    use_scale_shift_norm: bool = False
+    resblock_updown: bool = False
+    use_new_attention_order: bool = False
+    with_fourier_features: bool = False
+    ignore_time: bool = False
+    input_projection: bool = True
+    rngs: nnx.Rngs = None
+
+    def __post_init__(self):
+        assert isinstance(self.rngs, nnx.Rngs), "Parameter `rngs` must be provided and be instance of nnx.Rngs"
+
+        if self.with_fourier_features:
+            self.in_channels += 12
+
+        if self.num_heads_upsample == -1:
+            self.num_heads_upsample = self.num_heads
+
+        self.time_embed_dim = self.model_channels * 4
+        if self.ignore_time:
+            self.time_embed = lambda x: jnp.zeros(
+                (x.shape[0], self.time_embed_dim), dtype=x.dtype
+            )
         else:
+            self.time_embed = nnx.Sequential(
+                nnx.Linear(self.model_channels, self.time_embed_dim, rngs=self.rngs),
+                nnx.silu,
+                nnx.Linear(self.time_embed_dim, self.time_embed_dim, rngs=self.rngs),
+            )
+
+        if self.num_classes is not None:
+            raise Exception("Parameter `num_classes` is not supported yet")
+            # self.label_emb = nnx.Embed(
+            #     self.num_classes + 1, self.time_embed_dim, padding_idx=self.num_classes
+            # )
+
+        ch = input_ch = int(self.channel_mult[0] * self.model_channels)
+        if self.input_projection:
+            self.input_blocks = [
+                    TimestepEmbedSequential(
+                        nnx.Conv(self.in_channels, ch, (3,) * self.dims, padding=1, rngs=self.rngs)
+                    )
+                ]
+        else:
+            self.input_blocks = [TimestepEmbedSequential(lambda x: x)]
+        self._feature_size = ch
+        input_block_chans = [ch]
+        ds = 1
+        for level, mult in enumerate(self.channel_mult):
+            for _ in range(self.num_res_blocks):
+                layers = [
+                    ResBlock(
+                        ch,
+                        self.time_embed_dim,
+                        self.dropout,
+                        out_channels=int(mult * self.model_channels),
+                        dims=self.dims,
+                        use_checkpoint=self.use_checkpoint,
+                        use_scale_shift_norm=self.use_scale_shift_norm,
+                        emb_off=self.ignore_time and self.num_classes is None,
+                        rngs=self.rngs
+                    )
+                ]
+                ch = int(mult * self.model_channels)
+                if ds in self.attention_resolutions:
+                    layers.append(
+                        AttentionBlock(
+                            ch,
+                            use_checkpoint=self.use_checkpoint,
+                            num_heads=self.num_heads,
+                            num_head_channels=self.num_head_channels,
+                            # use_new_attention_order=self.use_new_attention_order,
+                            rngs=self.rngs
+                        )
+                    )
+                self.input_blocks.append(TimestepEmbedSequential(*layers))
+                self._feature_size += ch
+                input_block_chans.append(ch)
+            if level != len(self.channel_mult) - 1:
+                out_ch = ch
+                self.input_blocks.append(
+                    TimestepEmbedSequential(
+                        ResBlock(
+                            ch,
+                            self.time_embed_dim,
+                            self.dropout,
+                            out_channels=out_ch,
+                            dims=self.dims,
+                            use_checkpoint=self.use_checkpoint,
+                            use_scale_shift_norm=self.use_scale_shift_norm,
+                            down=True,
+                            emb_off=self.ignore_time and self.num_classes is None,
+                            rngs=self.rngs
+                        )
+                        if self.resblock_updown
+                        else Downsample(
+                            ch, self.conv_resample, dims=self.dims, out_channels=out_ch, rngs=self.rngs
+                        )
+                    )
+                )
+                ch = out_ch
+                input_block_chans.append(ch)
+                ds *= 2
+                self._feature_size += ch
+
+        self.middle_block = TimestepEmbedSequential(
+            ResBlock(
+                ch,
+                self.time_embed_dim,
+                self.dropout,
+                dims=self.dims,
+                use_checkpoint=self.use_checkpoint,
+                use_scale_shift_norm=self.use_scale_shift_norm,
+                emb_off=self.ignore_time and self.num_classes is None,
+                rngs=self.rngs
+            ),
+            AttentionBlock(
+                ch,
+                use_checkpoint=self.use_checkpoint,
+                num_heads=self.num_heads,
+                num_head_channels=self.num_head_channels,
+                # use_new_attention_order=self.use_new_attention_order,
+                rngs=self.rngs,
+            ),
+            ResBlock(
+                ch,
+                self.time_embed_dim,
+                self.dropout,
+                dims=self.dims,
+                use_checkpoint=self.use_checkpoint,
+                use_scale_shift_norm=self.use_scale_shift_norm,
+                emb_off=self.ignore_time and self.num_classes is None,
+                rngs=self.rngs
+            ),
+        )
+        self._feature_size += ch
+
+        self.output_blocks = []
+        for level, mult in list(enumerate(self.channel_mult))[::-1]:
+            for i in range(self.num_res_blocks + 1):
+                ich = input_block_chans.pop()
+                layers = [
+                    ResBlock(
+                        ch + ich,
+                        self.time_embed_dim,
+                        self.dropout,
+                        out_channels=int(self.model_channels * mult),
+                        dims=self.dims,
+                        use_checkpoint=self.use_checkpoint,
+                        use_scale_shift_norm=self.use_scale_shift_norm,
+                        emb_off=self.ignore_time and self.num_classes is None,
+                        rngs=self.rngs,
+                    )
+                ]
+                ch = int(self.model_channels * mult)
+                if ds in self.attention_resolutions:
+                    layers.append(
+                        AttentionBlock(
+                            ch,
+                            use_checkpoint=self.use_checkpoint,
+                            num_heads=self.num_heads_upsample,
+                            num_head_channels=self.num_head_channels,
+                            # use_new_attention_order=self.use_new_attention_order,
+                            rngs=self.rngs,
+                        )
+                    )
+                if level and i == self.num_res_blocks:
+                    out_ch = ch
+                    layers.append(
+                        ResBlock(
+                            ch,
+                            self.time_embed_dim,
+                            self.dropout,
+                            out_channels=out_ch,
+                            dims=self.dims,
+                            use_checkpoint=self.use_checkpoint,
+                            use_scale_shift_norm=self.use_scale_shift_norm,
+                            up=True,
+                            emb_off=self.ignore_time and self.num_classes is None,
+                            rngs=self.rngs
+                        )
+                        if self.resblock_updown
+                        else Upsample(
+                            ch, self.conv_resample, dims=self.dims, out_channels=out_ch, rngs=self.rngs
+                        )
+                    )
+                    ds //= 2
+                self.output_blocks.append(TimestepEmbedSequential(*layers))
+                self._feature_size += ch
+
+        self.out = nnx.Sequential(
+            GroupNorm32(num_features=ch, num_groups=ch, rngs=self.rngs),
+            nnx.silu,
+            zero_module(nnx.Conv(input_ch, self.out_channels, (3,) * self.dims, padding=1, rngs=self.rngs)),
+        )
+
+    def __call__(self, x, timesteps, extra):
+        """
+        Apply the model to an input batch.
+        :param x: an [N x ... x C] Tensor of inputs.
+        :param timesteps: a 1-D batch of timesteps.
+        :param y: an [N] Tensor of labels, if class-conditional.
+        :return: an [N x ... x C] Tensor of outputs.
+        """
+        if self.with_fourier_features:
+            raise Exception("Parameter with_fourier_features is not supported yet")
+            # z_f = base2_fourier_features(x, start=6, stop=8, step=1)
+            # x = torch.cat([x, z_f], dim=1)
+
+        hs = []
+        emb = self.time_embed(timestep_embedding(timesteps, self.model_channels).astype(x))
+
+        if self.ignore_time:
+            emb = emb * 0.0
+
+        # if self.num_classes and "label" not in extra:
+        #     # Hack to deal with ddp find_unused_parameters not working with activation checkpointing...
+        #     # self.num_classes corresponds to the pad index of the embedding table
+        #     extra["label"] = torch.full(
+        #         (x.size(0),), self.num_classes, dtype=torch.long, device=x.device
+        #     )
+
+        if self.num_classes is not None and "label" in extra:
+            y = extra["label"]
             assert (
-                channels % num_head_channels == 0
-            ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
-            self.num_heads = channels // num_head_channels
-        self.use_checkpoint = use_checkpoint
-        self.norm = GroupNorm32(num_features=channels, num_groups=channels, rngs=rngs)
-        self.qkv = nnx.Conv(channels, channels * 3, (1,), rngs=rngs)
-        self.attention = QKVAttention(self.num_heads)
-        self.proj_out = zero_module(nnx.Conv(channels, channels, (1,), rngs=rngs))
+                y.shape == x.shape[:1]
+            ), f"Labels have shape {y.shape}, which does not match the batch dimension of the input {x.shape}"
+            emb = emb + self.label_emb(y)
 
-    def __call__(self, x):
-        b, *spatial, c = x.shape
-        x = x.reshape(b, -1, c)
-        qkv = self.qkv(self.norm(x))
-        h = self.attention(qkv)
-        h = self.proj_out(h)
-        return (x + h).reshape(b, *spatial, c)
+        h = x
+        if "concat_conditioning" in extra:
+            raise Exception(f"Param concat_conditioning is not yet supported")
+            # h = torch.cat([x, extra["concat_conditioning"]], dim=1)
+
+        for module in self.input_blocks:
+            h = module(h, emb)
+            hs.append(h)
+        h = self.middle_block(h, emb)
+        for module in self.output_blocks:
+            h = jnp.concatenate([h, hs.pop()], axis=-1)
+            h = module(h, emb)
+        h = h.astype(x.dtype)
+        result = self.out(h)
+        return result
 
 
-
-def main():
-    spatial_dim = 64
-    embed_dim = 16
-    channels = embed_dim
-    emb_channels = 8
-    dropout = 0.5
-    out_channels=None
-    use_conv=False
-    use_scale_shift_norm=False
-    dims=2
-    use_checkpoint=False
-    up=False
-    down=False
-    emb_off=False
+def example():
+    in_channels = 3
     rngs = nnx.Rngs(0)
-    # self = ResBlock(channels, emb_channels, dropout, use_conv=True, rngs=rngs)
-    self = AttentionBlock(channels, rngs=rngs)
-    x = jax.random.normal(rngs(), (5, spatial_dim, spatial_dim, embed_dim, ))
-    emb = jax.random.normal(rngs(), (5, emb_channels))
-    y = self(x)
-    y = nnx.jit(self.__call__)(x)
+    self = UNetModel(in_channels, rngs=rngs)
+    x = jax.random.normal(rngs(), (5, 64, 64, in_channels))
+    timesteps = jax.random.uniform(rngs(), 5)
+    y = self(x, timesteps, {})
+    y = nnx.jit(self.__call__)(x, timesteps, {})
 
-
-
-# @dataclass(eq=False)
-# class UNetModel(nn.Module):
-#     """
-#     The full UNet model with attention and timestep embedding.
-#     :param in_channels: channels in the input Tensor.
-#     :param model_channels: base channel count for the model.
-#     :param out_channels: channels in the output Tensor.
-#     :param num_res_blocks: number of residual blocks per downsample.
-#     :param attention_resolutions: a collection of downsample rates at which
-#         attention will take place. May be a set, list, or tuple.
-#         For example, if this contains 4, then at 4x downsampling, attention
-#         will be used.
-#     :param dropout: the dropout probability.
-#     :param channel_mult: channel multiplier for each level of the UNet.
-#     :param conv_resample: if True, use learned convolutions for upsampling and
-#         downsampling.
-#     :param dims: determines if the signal is 1D, 2D, or 3D.
-#     :param num_classes: if specified (as an int), then this model will be
-#         class-conditional with `num_classes` classes.
-#     :param use_checkpoint: use gradient checkpointing to reduce memory usage.
-#     :param num_heads: the number of attention heads in each attention layer.
-#     :param num_heads_channels: if specified, ignore num_heads and instead use
-#                                a fixed channel width per attention head.
-#     :param num_heads_upsample: works with num_heads to set a different number
-#                                of heads for upsampling. Deprecated.
-#     :param use_scale_shift_norm: use a FiLM-like conditioning mechanism.
-#     :param resblock_updown: use residual blocks for up/downsampling.
-#     :param use_new_attention_order: use a different attention pattern for potentially
-#                                     increased efficiency.
-#     """
-
-#     in_channels: int
-#     model_channels: int = 128
-#     out_channels: int = 3
-#     num_res_blocks: int = 2
-#     attention_resolutions: Tuple[int] = (1, 2, 2, 2)
-#     dropout: float = 0.0
-#     channel_mult: Tuple[int] = (1, 2, 4, 8)
-#     conv_resample: bool = True
-#     dims: int = 2
-#     num_classes: Optional[int] = None
-#     use_checkpoint: bool = False
-#     num_heads: int = 1
-#     num_head_channels: int = -1
-#     num_heads_upsample: int = -1
-#     use_scale_shift_norm: bool = False
-#     resblock_updown: bool = False
-#     use_new_attention_order: bool = False
-#     with_fourier_features: bool = False
-#     ignore_time: bool = False
-#     input_projection: bool = True
-
-#     image_size: int = -1  # not used...
-#     _target_: str = "lib.models.gd_unet.UNetModel"
-
-#     def __post_init__(self):
-#         super().__init__()
-
-#         if self.with_fourier_features:
-#             self.in_channels += 12
-
-#         if self.num_heads_upsample == -1:
-#             self.num_heads_upsample = self.num_heads
-
-#         self.time_embed_dim = self.model_channels * 4
-#         if self.ignore_time:
-#             self.time_embed = lambda x: torch.zeros(
-#                 x.shape[0], self.time_embed_dim, device=x.device, dtype=x.dtype
-#             )
-#         else:
-#             self.time_embed = nn.Sequential(
-#                 linear(self.model_channels, self.time_embed_dim),
-#                 nn.SiLU(),
-#                 linear(self.time_embed_dim, self.time_embed_dim),
-#             )
-
-#         if self.num_classes is not None:
-#             self.label_emb = nn.Embedding(
-#                 self.num_classes + 1, self.time_embed_dim, padding_idx=self.num_classes
-#             )
-
-#         ch = input_ch = int(self.channel_mult[0] * self.model_channels)
-#         if self.input_projection:
-#             self.input_blocks = nn.ModuleList(
-#                 [
-#                     TimestepEmbedSequential(
-#                         conv_nd(self.dims, self.in_channels, ch, 3, padding=1)
-#                     )
-#                 ]
-#             )
-#         else:
-#             self.input_blocks = nn.ModuleList(
-#                 [TimestepEmbedSequential(torch.nn.Identity())]
-#             )
-#         self._feature_size = ch
-#         input_block_chans = [ch]
-#         ds = 1
-#         for level, mult in enumerate(self.channel_mult):
-#             for _ in range(self.num_res_blocks):
-#                 layers = [
-#                     ResBlock(
-#                         ch,
-#                         self.time_embed_dim,
-#                         self.dropout,
-#                         out_channels=int(mult * self.model_channels),
-#                         dims=self.dims,
-#                         use_checkpoint=self.use_checkpoint,
-#                         use_scale_shift_norm=self.use_scale_shift_norm,
-#                         emb_off=self.ignore_time and self.num_classes is None,
-#                     )
-#                 ]
-#                 ch = int(mult * self.model_channels)
-#                 if ds in self.attention_resolutions:
-#                     layers.append(
-#                         AttentionBlock(
-#                             ch,
-#                             use_checkpoint=self.use_checkpoint,
-#                             num_heads=self.num_heads,
-#                             num_head_channels=self.num_head_channels,
-#                             use_new_attention_order=self.use_new_attention_order,
-#                         )
-#                     )
-#                 self.input_blocks.append(TimestepEmbedSequential(*layers))
-#                 self._feature_size += ch
-#                 input_block_chans.append(ch)
-#             if level != len(self.channel_mult) - 1:
-#                 out_ch = ch
-#                 self.input_blocks.append(
-#                     TimestepEmbedSequential(
-#                         ResBlock(
-#                             ch,
-#                             self.time_embed_dim,
-#                             self.dropout,
-#                             out_channels=out_ch,
-#                             dims=self.dims,
-#                             use_checkpoint=self.use_checkpoint,
-#                             use_scale_shift_norm=self.use_scale_shift_norm,
-#                             down=True,
-#                             emb_off=self.ignore_time and self.num_classes is None,
-#                         )
-#                         if self.resblock_updown
-#                         else Downsample(
-#                             ch, self.conv_resample, dims=self.dims, out_channels=out_ch
-#                         )
-#                     )
-#                 )
-#                 ch = out_ch
-#                 input_block_chans.append(ch)
-#                 ds *= 2
-#                 self._feature_size += ch
-
-#         self.middle_block = TimestepEmbedSequential(
-#             ResBlock(
-#                 ch,
-#                 self.time_embed_dim,
-#                 self.dropout,
-#                 dims=self.dims,
-#                 use_checkpoint=self.use_checkpoint,
-#                 use_scale_shift_norm=self.use_scale_shift_norm,
-#                 emb_off=self.ignore_time and self.num_classes is None,
-#             ),
-#             AttentionBlock(
-#                 ch,
-#                 use_checkpoint=self.use_checkpoint,
-#                 num_heads=self.num_heads,
-#                 num_head_channels=self.num_head_channels,
-#                 use_new_attention_order=self.use_new_attention_order,
-#             ),
-#             ResBlock(
-#                 ch,
-#                 self.time_embed_dim,
-#                 self.dropout,
-#                 dims=self.dims,
-#                 use_checkpoint=self.use_checkpoint,
-#                 use_scale_shift_norm=self.use_scale_shift_norm,
-#                 emb_off=self.ignore_time and self.num_classes is None,
-#             ),
-#         )
-#         self._feature_size += ch
-
-#         self.output_blocks = nn.ModuleList([])
-#         for level, mult in list(enumerate(self.channel_mult))[::-1]:
-#             for i in range(self.num_res_blocks + 1):
-#                 ich = input_block_chans.pop()
-#                 layers = [
-#                     ResBlock(
-#                         ch + ich,
-#                         self.time_embed_dim,
-#                         self.dropout,
-#                         out_channels=int(self.model_channels * mult),
-#                         dims=self.dims,
-#                         use_checkpoint=self.use_checkpoint,
-#                         use_scale_shift_norm=self.use_scale_shift_norm,
-#                         emb_off=self.ignore_time and self.num_classes is None,
-#                     )
-#                 ]
-#                 ch = int(self.model_channels * mult)
-#                 if ds in self.attention_resolutions:
-#                     layers.append(
-#                         AttentionBlock(
-#                             ch,
-#                             use_checkpoint=self.use_checkpoint,
-#                             num_heads=self.num_heads_upsample,
-#                             num_head_channels=self.num_head_channels,
-#                             use_new_attention_order=self.use_new_attention_order,
-#                         )
-#                     )
-#                 if level and i == self.num_res_blocks:
-#                     out_ch = ch
-#                     layers.append(
-#                         ResBlock(
-#                             ch,
-#                             self.time_embed_dim,
-#                             self.dropout,
-#                             out_channels=out_ch,
-#                             dims=self.dims,
-#                             use_checkpoint=self.use_checkpoint,
-#                             use_scale_shift_norm=self.use_scale_shift_norm,
-#                             up=True,
-#                             emb_off=self.ignore_time and self.num_classes is None,
-#                         )
-#                         if self.resblock_updown
-#                         else Upsample(
-#                             ch, self.conv_resample, dims=self.dims, out_channels=out_ch
-#                         )
-#                     )
-#                     ds //= 2
-#                 self.output_blocks.append(TimestepEmbedSequential(*layers))
-#                 self._feature_size += ch
-
-#         self.out = nn.Sequential(
-#             normalization(ch),
-#             nn.SiLU(),
-#             zero_module(conv_nd(self.dims, input_ch, self.out_channels, 3, padding=1)),
-#         )
-
-#     def forward(self, x, timesteps, extra):
-#         """
-#         Apply the model to an input batch.
-#         :param x: an [N x C x ...] Tensor of inputs.
-#         :param timesteps: a 1-D batch of timesteps.
-#         :param y: an [N] Tensor of labels, if class-conditional.
-#         :return: an [N x C x ...] Tensor of outputs.
-#         """
-#         if self.with_fourier_features:
-#             z_f = base2_fourier_features(x, start=6, stop=8, step=1)
-#             x = torch.cat([x, z_f], dim=1)
-
-#         hs = []
-#         emb = self.time_embed(timestep_embedding(timesteps, self.model_channels).to(x))
-
-#         if self.ignore_time:
-#             emb = emb * 0.0
-
-#         if self.num_classes and "label" not in extra:
-#             # Hack to deal with ddp find_unused_parameters not working with activation checkpointing...
-#             # self.num_classes corresponds to the pad index of the embedding table
-#             extra["label"] = torch.full(
-#                 (x.size(0),), self.num_classes, dtype=torch.long, device=x.device
-#             )
-
-#         if self.num_classes is not None and "label" in extra:
-#             y = extra["label"]
-#             assert (
-#                 y.shape == x.shape[:1]
-#             ), f"Labels have shape {y.shape}, which does not match the batch dimension of the input {x.shape}"
-#             emb = emb + self.label_emb(y)
-
-#         h = x
-#         if "concat_conditioning" in extra:
-#             h = torch.cat([x, extra["concat_conditioning"]], dim=1)
-
-#         for module in self.input_blocks:
-#             h = module(h, emb)
-#             hs.append(h)
-#         h = self.middle_block(h, emb)
-#         for module in self.output_blocks:
-#             h = torch.cat([h, hs.pop()], dim=1)
-#             h = module(h, emb)
-#         h = h.type(x.dtype)
-#         result = self.out(h)
-#         return result
 
 
 # # Based on https://github.com/google-research/vdm/blob/main/model_vdm.py

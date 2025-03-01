@@ -1,11 +1,8 @@
-# devel version with DNN is required for JIT compilation in some cases
-# FROM nvidia/cuda:12.4.1-cudnn9-devel-ubuntu22.04 AS build-base
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build-base
 
 
 ## Basic system setup
 
-RUN echo "trigger change"
 ENV user=devpod
 SHELL ["/bin/bash", "-c"]
 
@@ -58,8 +55,7 @@ RUN apt update && apt install -y --no-install-recommends \
 RUN apt-get update
 RUN apt-get install -y git openssh-server
 RUN apt-get install -y python3 python3-pip python-is-python3
-# RUN apt-get install -y jq
-# RUN pip install yq==3.1.1
+
 
 ## Add user & enable sudo
 
@@ -80,7 +76,7 @@ RUN pip install wheel
 
 
 # add specific version of JAX directry to the container
-RUN pip install jax["cuda12"]==0.4.29
+RUN pip install jax["cuda12"]==0.5.0
 
 COPY --chown=${user}:${user} ./pyproject.toml /home/${user}/
 RUN pip install pip-tools
@@ -89,26 +85,4 @@ RUN pip install -r requirements.txt
 
 
 
-
-
-## Post-install setup
-
-RUN mkdir -p ${HOME}/.cache
-RUN echo 'export PATH=${PATH}:${HOME}/.local/bin' >> ${HOME}/.bashrc
-
-# ensure libraries see CUDA
-RUN echo 'export LD_LIBRARY_PATH=/usr/local/cuda-11/lib64:/usr/lib/x86_64-linux-gnu/:${LD_LIBRARY_PATH}' >> ${HOME}/.bashrc
-RUN echo 'export PATH=/usr/local/cuda/bin:${PATH}' >> ${HOME}/.bashrc
-
-
-FROM build-base AS build-dev
-
-# RUN pip install pytest ipython mypy black isort
-
-FROM build-dev AS build-test
-
-RUN pip install Pillow matplotlib tensorflow
-RUN pip install tensorflow-datasets
-RUN pip install datasets
-
-CMD ["echo", "Explore!"]
+CMD ["echo", "Balance is the key"]

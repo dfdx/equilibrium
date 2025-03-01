@@ -2,8 +2,7 @@
 	"name": "Existing Dockerfile",
 	"build": {
 		"context": "..",
-		"dockerfile": "../Dockerfile",
-		"target": "build-test"
+		"dockerfile": "../Dockerfile"
 	},
 
 	"mounts": [

@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import flax.nnx as nnx
 import optax
 import datasets
+from tqdm import tqdm
 from equilibrium.flow.path.path import ProbPath
 from equilibrium.flow.path.affine import CondOTProbPath
 from equilibrium.models.unet import UNetModel
@@ -44,7 +45,7 @@ def main():
     # loss, grads = grad_fn(model, path, samples, labels, nnx.Rngs(5))
 
     ds = datasets.load_dataset('Maysee/tiny-imagenet', split='train')
-    batch = next(ds.iter(batch_size=8))
+    batch = next(ds.iter(batch_size=bsz))
     samples = jnp.array(batch["image"]).astype(jnp.bfloat16) / 255
     labels = jnp.array(batch["label"])
 
@@ -53,8 +54,13 @@ def main():
     # loss.block_until_ready()
 
     optimizer = nnx.Optimizer(model, optax.adamw(learning_rate=1e-3))
-    for batch_id, batch in enumerate(ds.iter(batch_size=8)):
+    pbar = tqdm(ds.iter(batch_size=bsz), total=ds.shape[0] // bsz)
+    for batch in pbar:
         samples = jnp.array(batch["image"]).astype(jnp.bfloat16) / 255
         labels = jnp.array(batch["label"])
         loss = train_step(model, path, samples, labels, optimizer, t_rngs)
-        print(f"loss = {loss}")
+        pbar.set_description(f"loss = {loss}")
+
+
+if __name__ == "__main__" and "__file__" in globals():
+    main()

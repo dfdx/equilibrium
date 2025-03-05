@@ -84,5 +84,13 @@ RUN python -m piptools compile --extra dev -o requirements.txt pyproject.toml
 RUN pip install -r requirements.txt
 
 
+## Dev tools (should not be in pyproject.toml)
+
+RUN pip install ipython seaborn datasets
+
+
+RUN echo 'export HOME=/home/'$user >> /home/$user/.bashrc
+RUN echo 'export PATH=/home/'$user'/.local/bin:${PATH}' >> /home/$user/.bashrc
+
 
 CMD ["echo", "Balance is the key"]

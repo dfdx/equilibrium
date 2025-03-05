@@ -44,7 +44,7 @@ def main():
     # grad_fn = nnx.jit(grad_fn, static_argnums=(1,))
     # loss, grads = grad_fn(model, path, samples, labels, nnx.Rngs(5))
 
-    ds = datasets.load_dataset('Maysee/tiny-imagenet', split='train')
+    ds = datasets.load_dataset('Maysee/tiny-imagenet', split='train[:50]')
     batch = next(ds.iter(batch_size=bsz))
     samples = jnp.array(batch["image"]).astype(jnp.bfloat16) / 255
     labels = jnp.array(batch["label"])
@@ -54,12 +54,16 @@ def main():
     # loss.block_until_ready()
 
     optimizer = nnx.Optimizer(model, optax.adamw(learning_rate=1e-3))
-    pbar = tqdm(ds.iter(batch_size=bsz), total=ds.shape[0] // bsz)
-    for batch in pbar:
-        samples = jnp.array(batch["image"]).astype(jnp.bfloat16) / 255
-        labels = jnp.array(batch["label"])
-        loss = train_step(model, path, samples, labels, optimizer, t_rngs)
-        pbar.set_description(f"loss = {loss}")
+    for epoch in range(10):
+        epoch_losses = []
+        pbar = tqdm(ds.iter(batch_size=bsz), total=ds.shape[0] // bsz)
+        for batch in pbar:
+            samples = jnp.array(batch["image"]).astype(jnp.bfloat16) / 255
+            labels = jnp.array(batch["label"])
+            loss = train_step(model, path, samples, labels, optimizer, t_rngs)
+            epoch_losses.append(loss.item())
+            pbar.set_description(f"epoch {epoch}: loss = {loss}")
+        print(f"Epoch {epoch} avg loss = {jnp.array(epoch_losses).mean()}")
 
 
 if __name__ == "__main__" and "__file__" in globals():

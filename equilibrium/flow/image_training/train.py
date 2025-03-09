@@ -1,8 +1,10 @@
+import os
 import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
 import optax
 import datasets
+import orbax.checkpoint as ocp
 from tqdm import tqdm
 from equilibrium.flow.path.path import ProbPath
 from equilibrium.flow.path.affine import CondOTProbPath
@@ -58,7 +60,7 @@ def main():
     # grad_fn = nnx.jit(grad_fn, static_argnums=(1,))
     # loss, grads = grad_fn(model, path, samples, labels, nnx.Rngs(5))
 
-    ds = datasets.load_dataset('Maysee/tiny-imagenet', split='train[:20]')
+    ds = datasets.load_dataset('Maysee/tiny-imagenet', split='train[:100]')
     batch = next(ds.iter(batch_size=bsz))
     samples = jnp.array(batch["image"]).astype(jnp.bfloat16) / 255
     labels = jnp.array(batch["label"])
@@ -85,9 +87,18 @@ def main():
 
 
 
+def save_model(model, ckpt_dir):
+    _, state = nnx.split(model)
+    nnx.display(state)
+
+    checkpointer = ocp.StandardCheckpointer()
+    checkpointer.save(os.path.join(ckpt_dir, 'state'), state)
+
+
 ###############################################################################
 
 from jax.experimental.ode import odeint
+from matplotlib import pyplot as plt
 
 
 def dummy_model(y, t, extras):
@@ -108,6 +119,36 @@ def generate(model: UNetModel, shape: tuple, dtype=jnp.float32, rngs: nnx.Rngs =
     out = odeint(wrapper, noise, t)
     return out
 
+
+def plot_samples(samples: jax.Array, path: str | None = None):
+    """
+    Arguments:
+    ----------
+    samples : jax.Array
+        Input image data of shape (B, H, W, C)
+    """
+    length = samples.shape[0]
+    n_rows = int(jnp.sqrt(length))
+    n_cols = int(jnp.ceil(length / n_rows))
+    fig, axs = plt.subplots(n_rows, n_cols)
+    for i in range(length):
+        sample = samples[i, :, :, :]
+        sample = sample - sample.min()
+        sample = sample / sample.max()
+        r, c = i // n_cols, i % n_cols
+        print(f"r = {r}, c = {c}")
+        axs[r, c].imshow(sample)
+    if path:
+        fig.savefig(path)
+
+
+
+def main_inf():
+    rngs = nnx.Rngs(0)
+    out = generate(model, (8, 64, 64, 3))
+    for i in range(8):
+        plot_samples(out[:, i, :, :, :], f"output/samples_{i}.jpg")
+        plt.clf()
 
 
 if __name__ == "__main__" and "__file__" in globals():

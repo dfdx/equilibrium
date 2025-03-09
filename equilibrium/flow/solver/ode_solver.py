@@ -1,3 +1,4 @@
+# TODO: unused, remove in the next round of cleaning
 # based on: https://raw.githubusercontent.com/facebookresearch/flow_matching/refs/heads/main/flow_matching/solver/ode_solver.py
 
 from typing import Callable, Optional, Sequence, Tuple, Union
@@ -16,7 +17,7 @@ class ODESolver:
     This class utilizes a velocity field model to solve ODEs over a given time grid using numerical ode solvers.
 
     Args:
-        velocity_model Callable): a velocity field model receiving :math:`(x,t)` and returning :math:`u_t(x)`
+        velocity_model (Callable): a velocity field model receiving :math:`(x,t)` and returning :math:`u_t(x)`
     """
 
     def __init__(self, velocity_model: Callable):
@@ -26,7 +27,7 @@ class ODESolver:
         self,
         x_init: Array,
         step_size: Optional[float],
-        method: str = "euler",
+        # method: str = "euler",
         atol: float = 1e-5,
         rtol: float = 1e-5,
         time_grid: Array = jnp.array([0.0, 1.0]),
@@ -78,7 +79,7 @@ class ODESolver:
             ode_func,
             x_init,
             time_grid,
-            method=method,
+            # method=method,
             options=ode_opts,
             atol=atol,
             rtol=rtol,

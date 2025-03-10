@@ -1,5 +1,3 @@
-# based on: https://github.com/facebookresearch/flow_matching/blob/main/examples/standalone_flow_matching.ipynb
-
 import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
@@ -10,9 +8,8 @@ from tqdm import tqdm
 from sklearn.datasets import make_moons
 
 
-class Flow(nnx.Module):
+class MoonModel(nnx.Module):
     def __init__(self, dim: int = 2, h: int = 64, rngs: nnx.Rngs = nnx.Rngs(0)):
-        super().__init__()
         self.net = nnx.Sequential(
             nnx.Linear(dim + 1, h, rngs=rngs), nnx.elu,
             nnx.Linear(h, h, rngs=rngs), nnx.elu,
@@ -22,10 +19,15 @@ class Flow(nnx.Module):
     def __call__(self, x_t: jax.Array, t: jax.Array) -> jax.Array:
         return self.net(jnp.concatenate((t, x_t), axis=-1))
 
+
+class Flow(nnx.Module):
+    def __init__(self, model):
+        self.model = model
+
     def step(self, x_t: jax.Array, t_start: jax.Array, t_end: jax.Array) -> jax.Array:
         t_start = t_start.reshape(1, 1)
         t_start = jnp.repeat(t_start, x_t.shape[0], axis=0)
-        return x_t + (t_end - t_start) * self(t=t_start + (t_end - t_start) / 2, x_t= x_t + self(x_t=x_t, t=t_start) * (t_end - t_start) / 2)
+        return x_t + (t_end - t_start) * self.model(t=t_start + (t_end - t_start) / 2, x_t= x_t + self.model(x_t=x_t, t=t_start) * (t_end - t_start) / 2)
 
 
 
@@ -48,8 +50,8 @@ def train_step(model, optimizer, prng):
 
 
 def training():
-    flow = Flow()
-    model = flow
+    model = MoonModel()
+    flow = Flow(model)
 
     rngs = nnx.Rngs(0)
     optimizer = nnx.Optimizer(model, optax.adam(1e-2))

@@ -136,8 +136,9 @@ def plot_samples(samples: jax.Array, path: str | None = None):
         sample = sample - sample.min()
         sample = sample / sample.max()
         r, c = i // n_cols, i % n_cols
-        print(f"r = {r}, c = {c}")
+        # print(f"r = {r}, c = {c}")
         axs[r, c].imshow(sample)
+    plt.tight_layout()
     if path:
         fig.savefig(path)
 

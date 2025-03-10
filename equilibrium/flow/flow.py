@@ -27,7 +27,11 @@ class Flow(nnx.Module):
     def step(self, x_t: jax.Array, t_start: jax.Array, t_end: jax.Array) -> jax.Array:
         t_start = t_start.reshape(1, 1)
         t_start = jnp.repeat(t_start, x_t.shape[0], axis=0)
-        return x_t + (t_end - t_start) * self.model(t=t_start + (t_end - t_start) / 2, x_t= x_t + self.model(x_t=x_t, t=t_start) * (t_end - t_start) / 2)
+        new_t = t_start + (t_end - t_start) / 2
+        new_x_t = x_t + self.model(x_t=x_t, t=t_start) * (t_end - t_start) / 2
+        return x_t + (t_end - t_start) * self.model(t=new_t, x_t=new_x_t)
+
+        # return x_t + (t_end - t_start) * self(t=t_start + (t_end - t_start) / 2, x_t= x_t + self(x_t=x_t, t=t_start) * (t_end - t_start) / 2)
 
 
 

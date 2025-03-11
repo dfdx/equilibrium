@@ -1,3 +1,5 @@
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
@@ -6,6 +8,8 @@ import matplotlib.pyplot as plt
 
 from tqdm import tqdm
 from sklearn.datasets import make_moons
+
+from equilibrium.flow.path.affine import CondOTProbPath
 
 
 class MoonModel(nnx.Module):
@@ -35,20 +39,23 @@ class Flow(nnx.Module):
 
 
 
-@nnx.jit
-def train_step(model, optimizer, prng):
+@partial(nnx.jit, static_argnums=(1,))
+def train_step(model, path, optimizer, prng):
     def loss_fn(model, x_t, t, dx_t):
         return optax.l2_loss(model(x_t=x_t, t=t), dx_t).mean()
     prng_x_0, prng_t = jax.random.split(prng)
     # generate data
     x_1 = jnp.array(make_moons(256, noise=0.05)[0])
     x_0 = jax.random.normal(prng_x_0, x_1.shape)
-    t = jax.random.normal(prng_t, (len(x_1), 1))
+    t = jax.random.normal(prng_t, len(x_1))
     # sample point on the path
-    x_t = (1 - t) * x_0 + t * x_1
-    dx_t = x_1 - x_0
+    # x_t = (1 - t) * x_0 + t * x_1
+    # dx_t = x_1 - x_0
+    path_sample = path.sample(t=t, x_0=x_0, x_1=x_1)
+    x_t = path_sample.x_t
+    u_t = path_sample.dx_t
     # calculate loss & update
-    loss, grads = nnx.value_and_grad(loss_fn)(model, x_t, t, dx_t)
+    loss, grads = nnx.value_and_grad(loss_fn)(model, x_t, t.reshape(-1, 1), u_t)
     optimizer.update(grads)
     return loss
 
@@ -56,6 +63,7 @@ def train_step(model, optimizer, prng):
 def training():
     model = MoonModel()
     flow = Flow(model)
+    path = CondOTProbPath()
 
     rngs = nnx.Rngs(0)
     optimizer = nnx.Optimizer(model, optax.adam(1e-2))
@@ -63,7 +71,7 @@ def training():
 
     pbar = tqdm(range(10000))
     for i in pbar:
-        loss = train_step(model, optimizer, rngs())
+        loss = train_step(model, path, optimizer, rngs())
         if i % 1000 == 0:
             pbar.set_description(f"loss = {loss}")
 

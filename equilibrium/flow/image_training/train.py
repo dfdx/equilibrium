@@ -1,14 +1,16 @@
-import os
 import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
 import optax
 import datasets
-import orbax.checkpoint as ocp
 from tqdm import tqdm
 from equilibrium.flow.path.path import ProbPath
 from equilibrium.flow.path.affine import CondOTProbPath
 from equilibrium.models.unet import UNetModel
+from equilibrium.utils import save_model, load_model
+
+
+MODEL_PATH = "output/ckpt"
 
 
 def loss_fn(model: nnx.Module, path: ProbPath, samples: jax.Array, labels: jax.Array, rngs: nnx.Rngs):
@@ -49,18 +51,8 @@ def main():
     path = CondOTProbPath()
     bsz, in_channels, hw = 2, 3, 64
     model = UNetModel(in_channels, rngs=rngs)
-    # samples = jax.random.normal(rngs(), (bsz, hw, hw, in_channels))
-    # labels = jax.random.randint(rngs(), bsz, 0, 3)
-    # timesteps = jax.random.uniform(rngs(), bsz)
-    # out = model(samples, timesteps, {"labels": labels})
 
-    # loss = loss_fn(model, path, samples, labels, rngs)
-
-    # grad_fn = nnx.value_and_grad(loss_fn)
-    # grad_fn = nnx.jit(grad_fn, static_argnums=(1,))
-    # loss, grads = grad_fn(model, path, samples, labels, nnx.Rngs(5))
-
-    ds = datasets.load_dataset('Maysee/tiny-imagenet', split='train[:100]')
+    ds = datasets.load_dataset('Maysee/tiny-imagenet', split='train[:10%]')
     batch = next(ds.iter(batch_size=bsz))
     samples = jnp.array(batch["image"]).astype(jnp.bfloat16) / 255
     labels = jnp.array(batch["label"])
@@ -69,30 +61,79 @@ def main():
     # loss, grads = grad_fn(model, path, samples, labels, t_rngs)
     # loss.block_until_ready()
 
-    # optimizer = nnx.Optimizer(model, optax.adamw(learning_rate=1e-3))
+    # optimizer = nnx.Optimizer(model, optax.adamw(learning_rate=1e-2))
     optimizer = nnx.Optimizer(model, optax.sgd(learning_rate=1e-3))
-    for epoch in range(100):
+    for epoch in range(50):
         epoch_losses = []
         pbar = tqdm(ds.iter(batch_size=bsz), total=ds.shape[0] // bsz)
         for batch in pbar:
-            samples = jnp.array(batch["image"]).astype(jnp.bfloat16) / 255
-            labels = jnp.array(batch["label"])
-            loss = train_step(model, path, samples, labels, optimizer, t_rngs)
-            epoch_losses.append(loss.item())
-            pbar.set_description(f"epoch {epoch}: loss = {loss}")
+            try:
+                samples = jnp.array(batch["image"]).astype(jnp.bfloat16) / 255
+                labels = jnp.array(batch["label"])
+                loss = train_step(model, path, samples, labels, optimizer, t_rngs)
+                epoch_losses.append(loss.item())
+                pbar.set_description(f"epoch {epoch}: loss = {loss}")
+            except:
+                print(f"Failed to process batch #{pbar.n}")
         pbar.write(
             f"==> epoch {epoch}: avg loss = {jnp.array(epoch_losses).mean()}"
         )
+        save_model(model, MODEL_PATH + f"/{epoch}")
 
 
 
 
-def save_model(model, ckpt_dir):
-    _, state = nnx.split(model)
-    nnx.display(state)
+class Flow(nnx.Module):
+    def __init__(self, model):
+        self.model = model
 
-    checkpointer = ocp.StandardCheckpointer()
-    checkpointer.save(os.path.join(ckpt_dir, 'state'), state)
+    def step(self, x_t: jax.Array, t_start: jax.Array, t_end: jax.Array) -> jax.Array:
+        # t_start = t_start.reshape(1, 1)
+        t_start = jnp.repeat(t_start, x_t.shape[0], axis=0)
+        # new_t = t_start + (t_end - t_start) / 2
+        # new_x_t = x_t + self.model(x_t, t_start, {}) * (t_end - t_start) / 2
+        # return x_t + (t_end - t_start) * self.model(new_x_t, new_t, {})
+
+
+        return x_t + (t_end - t_start) * self.model(
+            extra={},
+            timesteps=t_start + (t_end - t_start) / 2,
+            x=x_t + self.model(
+                x=x_t,
+                timesteps=t_start,
+                extra={}
+            ) * (t_end - t_start) / 2)
+
+        # return x_t + (t_end - t_start) * self(t=t_start + (t_end - t_start) / 2, x_t= x_t + self(x_t=x_t, t=t_start) * (t_end - t_start) / 2)
+
+
+
+
+def sampling():
+    model = load_model(lambda: UNetModel(3, rngs=nnx.Rngs(28)), MODEL_PATH, to_cpu=True)
+    flow = Flow(model)
+    rngs = nnx.Rngs(113)
+    x = jax.random.normal(rngs(), (1, 64, 64, 3))
+    n_steps = 8
+    fig, axes = plt.subplots(1, n_steps + 1, figsize=(30, 4), sharex=True, sharey=True)
+    time_steps = jnp.linspace(0, 1.0, n_steps + 1)
+
+    # axes[0].scatter(x[:, 0], x[:, 1], s=10)
+    # axes[0].set_title(f't = {time_steps[0]:.2f}')
+    # axes[0].set_xlim(-3.0, 3.0)
+    # axes[0].set_ylim(-3.0, 3.0)
+
+    samples = []
+    for i in tqdm(range(n_steps)):
+        x = flow.step(x_t=x, t_start=time_steps[i], t_end=time_steps[i + 1])
+        samples.append(x)
+    samples = jnp.vstack(samples)
+    plot_samples(samples, "output/generated.jpg")
+
+
+    # plt.tight_layout()
+    # plt.savefig("output/generated.jpg")
+
 
 
 ###############################################################################
@@ -154,3 +195,10 @@ def main_inf():
 
 if __name__ == "__main__" and "__file__" in globals():
     main()
+
+
+
+# TODO (assuming implementation is correct):
+# 1. Clean code
+# 2. Implement char-level one-hot-encoded transformer
+# 3. Train char diffusion

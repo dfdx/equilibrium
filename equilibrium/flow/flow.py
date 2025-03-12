@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from sklearn.datasets import make_moons
 
+from equilibrium.models.unet import UNetModel
 from equilibrium.flow.path.affine import CondOTProbPath
 
 
@@ -61,7 +62,8 @@ def train_step(model, path, optimizer, prng):
 
 
 def training():
-    model = MoonModel()
+    bsz, in_channels, hw = 2, 3, 64
+    model = UNetModel(in_channels, rngs=rngs)
     flow = Flow(model)
     path = CondOTProbPath()
 
@@ -79,7 +81,7 @@ def training():
 
 def sampling(flow):
     rngs = nnx.Rngs(113)
-    x = jax.random.normal(rngs(), (300, 2))
+    x = jax.random.normal(rngs(), (2, 64, 64, 3))
     n_steps = 8
     fig, axes = plt.subplots(1, n_steps + 1, figsize=(30, 4), sharex=True, sharey=True)
     time_steps = jnp.linspace(0, 1.0, n_steps + 1)

@@ -1,8 +1,10 @@
-from typing import Optional
+import os
+from typing import Callable
 
 import jax
 import jax.numpy as jnp
-from jax import grad
+import flax.nnx as nnx
+import orbax.checkpoint as ocp
 
 
 def unsqueeze_to_match(source: jnp.ndarray, target: jnp.ndarray, how: str = "suffix") -> jnp.ndarray:
@@ -56,33 +58,6 @@ def expand_tensor_like(input_tensor: jnp.ndarray, expand_to: jnp.ndarray) -> jnp
     return jnp.broadcast_to(t_expanded, expand_to.shape)
 
 
-# TODO: this looks incorrect, check and rewrite when needed
-# def gradient(
-#     output: jnp.ndarray,
-#     x: jnp.ndarray,
-#     grad_outputs: Optional[jnp.ndarray] = None,
-#     create_graph: bool = False,
-# ) -> jnp.ndarray:
-#     """
-#     Compute the gradient of the inner product of output and grad_outputs w.r.t :math:`x`.
-
-#     Args:
-#         output (jnp.ndarray): [N, D] Output of the function.
-#         x (jnp.ndarray): [N, d_1, d_2, ... ] input
-#         grad_outputs (Optional[jnp.ndarray]): [N, D] Gradient of outputs, if `None`,
-#             then will use a tensor of ones
-#         create_graph (bool): If True, graph of the derivative will be constructed, allowing
-#             to compute higher order derivative products. Defaults to False.
-#     Returns:
-#         jnp.ndarray: [N, d_1, d_2, ... ]. the gradient w.r.t x.
-#     """
-
-#     if grad_outputs is None:
-#         grad_outputs = jnp.ones_like(output)
-#     grad_fn = grad(lambda x: jnp.sum(output * grad_outputs))
-#     return grad_fn(x)
-
-
 
 def visualize_path(path, x0: jax.Array, x1: jax.Array, fig_path: str | None = None):
     try:
@@ -96,3 +71,28 @@ def visualize_path(path, x0: jax.Array, x1: jax.Array, fig_path: str | None = No
         plt.savefig(fig_path)
     else:
         plt.show()
+
+
+
+def save_model(model, ckpt_dir: str):
+    _, rng_state, state = nnx.split(model, nnx.RngState, ...)
+    checkpointer = ocp.StandardCheckpointer()
+    ckpt_path = os.path.abspath(os.path.join(ckpt_dir))
+    checkpointer.save(ckpt_path, state)
+
+
+cpu_device = jax.devices("cpu")[0]
+def set_cpu_sharding(x):
+    return jax.ShapeDtypeStruct(x.shape, x.dtype, sharding=jax.sharding.SingleDeviceSharding(cpu_device))
+
+
+def load_model(f: Callable, ckpt_dir: str, to_cpu: bool = False):
+    ckpt_dir = os.path.abspath(os.path.join(ckpt_dir))
+    abstract_model = nnx.eval_shape(f)
+    graphdef, rng_state, abstract_state = nnx.split(abstract_model, nnx.RngState, ...)
+    if to_cpu:
+        abstract_state = jax.tree.map(set_cpu_sharding, abstract_state)
+    checkpointer = ocp.StandardCheckpointer()
+    state_restored = checkpointer.restore(ckpt_dir, abstract_state)
+    model = nnx.merge(graphdef, rng_state, state_restored)
+    return model

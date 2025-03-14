@@ -1,4 +1,3 @@
-
 """
 Adapted from https://github.com/facebookresearch/flow_matching/blob/main/examples/image/models/unet.py
 """
@@ -6,15 +5,15 @@ Adapted from https://github.com/facebookresearch/flow_matching/blob/main/example
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Tuple
 from functools import partial
+from typing import Optional, Tuple
 
-import numpy as np
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
-from equilibrium.models.embeddings import timestep_embedding
+import numpy as np
 
+from equilibrium.models.embeddings import timestep_embedding
 
 ###############################################################################
 #                                  Utils                                      #
@@ -53,6 +52,7 @@ def spatial_dims(array_ndim: int, n_spatial_dims: int):
 ###############################################################################
 #                                Embeddings                                   #
 ###############################################################################
+
 
 class ConstantEmbedding(nnx.Module):
     def __init__(self, in_channels, out_channels, *, dtype=jnp.float32, rngs: nnx.Rngs):
@@ -94,11 +94,13 @@ class QKVAttention(nnx.Module):
             jnp.moveaxis(u, -1, -2).reshape(bs * self.n_heads, ch, length)
             for u in [q, k, v]
         ]
-        weight = jnp.einsum("bct,bcs->bts", q * scale, k * scale)  # More stable with f16 than dividing afterwards
+        weight = jnp.einsum(
+            "bct,bcs->bts", q * scale, k * scale
+        )  # More stable with f16 than dividing afterwards
         weight = nnx.softmax(weight.astype(jnp.float32), axis=-1).astype(weight.dtype)
         out = jnp.einsum("bts,bcs->bct", weight, v)
-        out = out.reshape(bs, -1, length)   # (N*H, C, T) -> (N, H*C, T)
-        out = jnp.moveaxis(out, -1, -2)      # (N, H*C, T) -> (N, T, H*C)
+        out = out.reshape(bs, -1, length)  # (N*H, C, T) -> (N, H*C, T)
+        out = jnp.moveaxis(out, -1, -2)  # (N, H*C, T) -> (N, T, H*C)
         return out
 
 
@@ -111,7 +113,7 @@ class AttentionPool2d(nnx.Module):
         num_heads_channels: int,
         *,
         output_dim: int = None,
-        rngs: nnx.Rngs
+        rngs: nnx.Rngs,
     ):
         # note: the order of HW and C dimensions is swapped compared to PyTorch impl
         self.positional_embedding = nnx.Param(
@@ -123,7 +125,10 @@ class AttentionPool2d(nnx.Module):
         )
         # self.c_proj = conv_nd(1, embed_dim, output_dim or embed_dim, 1)
         self.c_proj = nnx.Conv(
-            in_features=embed_dim, out_features=output_dim or embed_dim, kernel_size=1, rngs=rngs
+            in_features=embed_dim,
+            out_features=output_dim or embed_dim,
+            kernel_size=1,
+            rngs=rngs,
         )
         self.num_heads = embed_dim // num_heads_channels
         self.attention = QKVAttention(self.num_heads)
@@ -133,10 +138,10 @@ class AttentionPool2d(nnx.Module):
         x = x.reshape(b, -1, c)  # N(HW)C
         x = jnp.concatenate([x.mean(axis=-2, keepdims=True), x], axis=-2)  # N(HW+1)C
         x = x + self.positional_embedding[None, :, :].astype(x.dtype)  # N(HW+1)C
-        x = self.qkv_proj(x)     # N(HW+1)(3*C)
-        x = self.attention(x)    # N(HW+1)C
-        x = self.c_proj(x)       # N(HW+1)C
-        return x[:, :, 0]        # N(HW+1)
+        x = self.qkv_proj(x)  # N(HW+1)(3*C)
+        x = self.attention(x)  # N(HW+1)C
+        x = self.c_proj(x)  # N(HW+1)C
+        return x[:, :, 0]  # N(HW+1)
 
 
 class AttentionBlock(nnx.Module):
@@ -153,7 +158,7 @@ class AttentionBlock(nnx.Module):
         num_heads=1,
         num_head_channels=-1,
         use_checkpoint=False,
-        rngs: nnx.Rngs
+        rngs: nnx.Rngs,
     ):
         self.channels = channels
         if num_head_channels == -1:
@@ -224,7 +229,9 @@ class Upsample(nnx.Module):
                  upsampling occurs in the inner-two dimensions.
     """
 
-    def __init__(self, channels, use_conv, dims=2, *, out_channels=None, rngs: nnx.Rngs):
+    def __init__(
+        self, channels, use_conv, dims=2, *, out_channels=None, rngs: nnx.Rngs
+    ):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
@@ -232,8 +239,11 @@ class Upsample(nnx.Module):
         self.dims = dims
         if use_conv:
             self.conv = nnx.Conv(
-                in_features=self.channels, out_features=self.out_channels,
-                kernel_size=(3,) * dims, padding=1, rngs=rngs,
+                in_features=self.channels,
+                out_features=self.out_channels,
+                kernel_size=(3,) * dims,
+                padding=1,
+                rngs=rngs,
             )
 
     def __call__(self, x):
@@ -242,7 +252,7 @@ class Upsample(nnx.Module):
             x = jax.image.resize(
                 x,
                 (x.shape[0], x.shape[1], x.shape[2] * 2, x.shape[3] * 2, x.shape[4]),
-                method="nearest"
+                method="nearest",
             )
         else:
             # e.g. for NHWC image, spatial dims will be [1, 2]
@@ -264,7 +274,9 @@ class Downsample(nnx.Module):
                  downsampling occurs in the inner-two dimensions.
     """
 
-    def __init__(self, channels, use_conv, dims=2, *, out_channels=None, rngs: nnx.Rngs):
+    def __init__(
+        self, channels, use_conv, dims=2, *, out_channels=None, rngs: nnx.Rngs
+    ):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
@@ -273,17 +285,22 @@ class Downsample(nnx.Module):
         strides = 2 if dims != 3 else (1, 2, 2)
         if use_conv:
             self.op = nnx.Conv(
-                self.channels, self.out_channels, (3,) * dims,
-                strides=strides, padding=1, rngs=rngs
+                self.channels,
+                self.out_channels,
+                (3,) * dims,
+                strides=strides,
+                padding=1,
+                rngs=rngs,
             )
         else:
             assert self.channels == self.out_channels
-            self.op = partial(nnx.avg_pool, window_dim=(strides,) * dims, strides=strides)
+            self.op = partial(
+                nnx.avg_pool, window_dim=(strides,) * dims, strides=strides
+            )
 
     def __call__(self, x):
         assert x.shape[-1] == self.channels
         return self.op(x)
-
 
 
 class ResBlock(TimestepBlock):
@@ -317,7 +334,7 @@ class ResBlock(TimestepBlock):
         down=False,
         emb_off=False,
         deterministic=False,
-        rngs: nnx.Rngs
+        rngs: nnx.Rngs,
     ):
         self.dims = dims
         self.channels = channels
@@ -355,10 +372,12 @@ class ResBlock(TimestepBlock):
                 nnx.silu,
                 nnx.Linear(
                     emb_channels,
-                    2 * self.out_channels
-                    if use_scale_shift_norm
-                    else self.out_channels,
-                    rngs=rngs
+                    (
+                        2 * self.out_channels
+                        if use_scale_shift_norm
+                        else self.out_channels
+                    ),
+                    rngs=rngs,
                 ),
             )
 
@@ -367,7 +386,13 @@ class ResBlock(TimestepBlock):
             nnx.silu,
             nnx.Dropout(dropout, rngs=rngs, deterministic=deterministic),
             zero_module(
-                nnx.Conv(self.out_channels, self.out_channels, (3,) * dims, padding=1, rngs=rngs)
+                nnx.Conv(
+                    self.out_channels,
+                    self.out_channels,
+                    (3,) * dims,
+                    padding=1,
+                    rngs=rngs,
+                )
             ),
         )
 
@@ -378,7 +403,9 @@ class ResBlock(TimestepBlock):
                 channels, self.out_channels, (3,) * dims, padding=1, rngs=rngs
             )
         else:
-            self.skip_connection = nnx.Conv(channels, self.out_channels, (1,) * dims, rngs=rngs)
+            self.skip_connection = nnx.Conv(
+                channels, self.out_channels, (1,) * dims, rngs=rngs
+            )
 
     def __call__(self, x, emb):
         """
@@ -465,7 +492,9 @@ class UNetModel(nnx.Module):
     rngs: nnx.Rngs = None
 
     def __post_init__(self):
-        assert isinstance(self.rngs, nnx.Rngs), "Parameter `rngs` must be provided and be instance of nnx.Rngs"
+        assert isinstance(
+            self.rngs, nnx.Rngs
+        ), "Parameter `rngs` must be provided and be instance of nnx.Rngs"
 
         if self.with_fourier_features:
             self.in_channels += 12
@@ -494,10 +523,16 @@ class UNetModel(nnx.Module):
         ch = input_ch = int(self.channel_mult[0] * self.model_channels)
         if self.input_projection:
             self.input_blocks = [
-                    TimestepEmbedSequential(
-                        nnx.Conv(self.in_channels, ch, (3,) * self.dims, padding=1, rngs=self.rngs)
+                TimestepEmbedSequential(
+                    nnx.Conv(
+                        self.in_channels,
+                        ch,
+                        (3,) * self.dims,
+                        padding=1,
+                        rngs=self.rngs,
                     )
-                ]
+                )
+            ]
         else:
             self.input_blocks = [TimestepEmbedSequential(lambda x: x)]
         self._feature_size = ch
@@ -515,7 +550,7 @@ class UNetModel(nnx.Module):
                         use_checkpoint=self.use_checkpoint,
                         use_scale_shift_norm=self.use_scale_shift_norm,
                         emb_off=self.ignore_time and self.num_classes is None,
-                        rngs=self.rngs
+                        rngs=self.rngs,
                     )
                 ]
                 ch = int(mult * self.model_channels)
@@ -527,7 +562,7 @@ class UNetModel(nnx.Module):
                             num_heads=self.num_heads,
                             num_head_channels=self.num_head_channels,
                             # use_new_attention_order=self.use_new_attention_order,
-                            rngs=self.rngs
+                            rngs=self.rngs,
                         )
                     )
                 self.input_blocks.append(TimestepEmbedSequential(*layers))
@@ -547,11 +582,15 @@ class UNetModel(nnx.Module):
                             use_scale_shift_norm=self.use_scale_shift_norm,
                             down=True,
                             emb_off=self.ignore_time and self.num_classes is None,
-                            rngs=self.rngs
+                            rngs=self.rngs,
                         )
                         if self.resblock_updown
                         else Downsample(
-                            ch, self.conv_resample, dims=self.dims, out_channels=out_ch, rngs=self.rngs
+                            ch,
+                            self.conv_resample,
+                            dims=self.dims,
+                            out_channels=out_ch,
+                            rngs=self.rngs,
                         )
                     )
                 )
@@ -569,7 +608,7 @@ class UNetModel(nnx.Module):
                 use_checkpoint=self.use_checkpoint,
                 use_scale_shift_norm=self.use_scale_shift_norm,
                 emb_off=self.ignore_time and self.num_classes is None,
-                rngs=self.rngs
+                rngs=self.rngs,
             ),
             AttentionBlock(
                 ch,
@@ -587,7 +626,7 @@ class UNetModel(nnx.Module):
                 use_checkpoint=self.use_checkpoint,
                 use_scale_shift_norm=self.use_scale_shift_norm,
                 emb_off=self.ignore_time and self.num_classes is None,
-                rngs=self.rngs
+                rngs=self.rngs,
             ),
         )
         self._feature_size += ch
@@ -634,11 +673,15 @@ class UNetModel(nnx.Module):
                             use_scale_shift_norm=self.use_scale_shift_norm,
                             up=True,
                             emb_off=self.ignore_time and self.num_classes is None,
-                            rngs=self.rngs
+                            rngs=self.rngs,
                         )
                         if self.resblock_updown
                         else Upsample(
-                            ch, self.conv_resample, dims=self.dims, out_channels=out_ch, rngs=self.rngs
+                            ch,
+                            self.conv_resample,
+                            dims=self.dims,
+                            out_channels=out_ch,
+                            rngs=self.rngs,
                         )
                     )
                     ds //= 2
@@ -648,7 +691,15 @@ class UNetModel(nnx.Module):
         self.out = nnx.Sequential(
             GroupNorm32(num_features=ch, num_groups=ch, rngs=self.rngs),
             nnx.silu,
-            zero_module(nnx.Conv(input_ch, self.out_channels, (3,) * self.dims, padding=1, rngs=self.rngs)),
+            zero_module(
+                nnx.Conv(
+                    input_ch,
+                    self.out_channels,
+                    (3,) * self.dims,
+                    padding=1,
+                    rngs=self.rngs,
+                )
+            ),
         )
 
     def __call__(self, x, timesteps, extra):
@@ -659,13 +710,20 @@ class UNetModel(nnx.Module):
         :param y: an [N] Tensor of labels, if class-conditional.
         :return: an [N x ... x C] Tensor of outputs.
         """
+        assert x.ndim == 4, "x should be 4D array, but is instead {x.ndim}D"
+        assert (
+            timesteps.ndim == 1
+        ), f"timesteps should be 1D array, but is instead {timesteps.ndim}D"
+
         if self.with_fourier_features:
             raise Exception("Parameter with_fourier_features is not supported yet")
             # z_f = base2_fourier_features(x, start=6, stop=8, step=1)
             # x = torch.cat([x, z_f], dim=1)
 
         hs = []
-        emb = self.time_embed(timestep_embedding(timesteps, self.model_channels).astype(x))
+        emb = self.time_embed(
+            timestep_embedding(timesteps, self.model_channels).astype(x)
+        )
 
         if self.ignore_time:
             emb = emb * 0.0
@@ -709,7 +767,6 @@ def example():
     timesteps = jax.random.uniform(rngs(), 5)
     y = self(x, timesteps, {})
     y = nnx.jit(self.__call__)(x, timesteps, {})
-
 
 
 # # Based on https://github.com/google-research/vdm/blob/main/model_vdm.py

@@ -1,40 +1,41 @@
+import math
+import os
+
 import jax
 import optax
-import math
 
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import random as r
+from typing import Callable
+
+import flax.linen as nn
+import jax.numpy as jnp
+import jax.random as random
+import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
-import jax.numpy as jnp
-import jax.random as random
-import flax.linen as nn
 from flax.training import train_state
-import matplotlib.pyplot as plt
-
-from typing import Callable
-from tqdm import tqdm
-from PIL import Image
 from IPython import display
-
+from PIL import Image
+from tqdm import tqdm
 
 # Prevent TFDS from using GPU
-tf.config.experimental.set_visible_devices([], 'GPU')
+tf.config.experimental.set_visible_devices([], "GPU")
 
 # Defining some hyperparameters
 NUM_EPOCHS = 10
 BATCH_SIZE = 64
-NUM_STEPS_PER_EPOCH = 60000//BATCH_SIZE # MNIST has 60,000 training samples
+NUM_STEPS_PER_EPOCH = 60000 // BATCH_SIZE  # MNIST has 60,000 training samples
 
 
 # Load MNIST dataset
 
+
 def get_datasets():
-  # Load the MNIST dataset
-    train_ds = tfds.load('mnist', as_supervised=True, split="train")
+    # Load the MNIST dataset
+    train_ds = tfds.load("mnist", as_supervised=True, split="train")
 
     # Normalization helper
     def preprocess(x, y):
@@ -48,7 +49,6 @@ def get_datasets():
     return tfds.as_numpy(train_ds)
 
 
-
 # Defining a constant value for T
 timesteps = 200
 
@@ -58,7 +58,7 @@ beta = jnp.linspace(0.0001, 0.02, timesteps)
 # Defining alpha and its derivatives according to reparameterization trick
 alpha = 1 - beta
 alpha_bar = jnp.cumprod(alpha, 0)
-alpha_bar = jnp.concatenate((jnp.array([1.]), alpha_bar[:-1]), axis=0)
+alpha_bar = jnp.concatenate((jnp.array([1.0]), alpha_bar[:-1]), axis=0)
 sqrt_alpha_bar = jnp.sqrt(alpha_bar)
 one_minus_sqrt_alpha_bar = jnp.sqrt(1 - alpha_bar)
 
@@ -67,10 +67,13 @@ one_minus_sqrt_alpha_bar = jnp.sqrt(1 - alpha_bar)
 def forward_noising(key, x_0, t):
     noise = random.normal(key, x_0.shape)
     reshaped_sqrt_alpha_bar_t = jnp.reshape(jnp.take(sqrt_alpha_bar, t), (-1, 1, 1, 1))
-    reshaped_one_minus_sqrt_alpha_bar_t = jnp.reshape(jnp.take(one_minus_sqrt_alpha_bar, t), (-1, 1, 1, 1))
-    noisy_image = reshaped_sqrt_alpha_bar_t  * x_0 + reshaped_one_minus_sqrt_alpha_bar_t  * noise
+    reshaped_one_minus_sqrt_alpha_bar_t = jnp.reshape(
+        jnp.take(one_minus_sqrt_alpha_bar, t), (-1, 1, 1, 1)
+    )
+    noisy_image = (
+        reshaped_sqrt_alpha_bar_t * x_0 + reshaped_one_minus_sqrt_alpha_bar_t * noise
+    )
     return noisy_image, noise
-
 
 
 class SinusoidalEmbedding(nn.Module):
@@ -88,6 +91,7 @@ class SinusoidalEmbedding(nn.Module):
 
 class TimeEmbedding(nn.Module):
     dim: int = 32
+
     @nn.compact
     def __call__(self, inputs):
         time_dim = self.dim * 4
@@ -102,7 +106,6 @@ class TimeEmbedding(nn.Module):
         return x
 
 
-
 # Standard dot-product attention with eight heads.
 class Attention(nn.Module):
     dim: int
@@ -113,7 +116,7 @@ class Attention(nn.Module):
     @nn.compact
     def __call__(self, inputs):
         batch, h, w, channels = inputs.shape
-        inputs = inputs.reshape(batch, h*w, channels)
+        inputs = inputs.reshape(batch, h * w, channels)
         batch, n, channels = inputs.shape
         scale = (self.dim // self.num_heads) ** -0.5
         qkv = nn.Dense(
@@ -130,7 +133,7 @@ class Attention(nn.Module):
 
         x = (attention @ v).swapaxes(1, 2).reshape(batch, n, channels)
         x = nn.Dense(self.dim, kernel_init=nn.initializers.xavier_uniform())(x)
-        x = jnp.reshape(x, (batch, int(x.shape[1]** 0.5), int(x.shape[1]** 0.5), -1))
+        x = jnp.reshape(x, (batch, int(x.shape[1] ** 0.5), int(x.shape[1] ** 0.5), -1))
         return x
 
 
@@ -162,7 +165,6 @@ class ResnetBlock(nn.Module):
         return x + res_conv
 
 
-
 class UNet(nn.Module):
     dim: int = 8
     dim_scale_factor: tuple = (1, 2, 4, 8)
@@ -172,7 +174,7 @@ class UNet(nn.Module):
     def __call__(self, inputs):
         inputs, time = inputs
         channels = inputs.shape[-1]
-        x = nn.Conv(self.dim // 3 * 2, (7, 7), padding=((3,3), (3,3)))(inputs)
+        x = nn.Conv(self.dim // 3 * 2, (7, 7), padding=((3, 3), (3, 3)))(inputs)
         time_emb = TimeEmbedding(self.dim)(time)
 
         dims = [self.dim * i for i in self.dim_scale_factor]
@@ -191,7 +193,7 @@ class UNet(nn.Module):
             pre_downsampling.append(x)
             if index != len(dims) - 1:
                 print(f"downconv to {dim}")
-                x = nn.Conv(dim, (4,4), (2,2))(x)
+                x = nn.Conv(dim, (4, 4), (2, 2))(x)
                 print(f"x.shape (after downconv) == {x.shape}")
 
         # Middle block
@@ -210,28 +212,27 @@ class UNet(nn.Module):
             norm = nn.GroupNorm(self.num_groups)(att)
             x = norm + x
             if index != len(dims) - 1:
-                x = nn.ConvTranspose(dim, (4,4), (2,2))(x)
+                x = nn.ConvTranspose(dim, (4, 4), (2, 2))(x)
 
         # Final ResNet block and output convolutional layer
         x = ResnetBlock(dim, self.num_groups)(x, time_emb)
-        x = nn.Conv(channels, (1,1), padding="SAME")(x)
+        x = nn.Conv(channels, (1, 1), padding="SAME")(x)
         return x
-
 
 
 # Calculate the gradients and loss values for the specific timestamp
 @jax.jit
 def apply_model(state, noisy_images, noise, timestamp):
     """Computes gradients and loss for a single batch."""
+
     def loss_fn(params):
 
         # Take the prediction from the model
-        pred_noise = model.apply({'params': params}, [noisy_images, timestamp])
+        pred_noise = model.apply({"params": params}, [noisy_images, timestamp])
 
         # Calculate and return the MSE value
         loss = jnp.mean((noise - pred_noise) ** 2)
         return loss
-
 
     # Calculate gradients w.r.t loss function and return the loss value and gradients
     grad_fn = jax.value_and_grad(loss_fn, has_aux=False)
@@ -246,7 +247,6 @@ def update_model(state, grads):
     return state.apply_gradients(grads=grads)
 
 
-
 # Define the training step
 def train_epoch(epoch_num, state, train_ds, batch_size, rng):
     epoch_loss = []
@@ -255,9 +255,9 @@ def train_epoch(epoch_num, state, train_ds, batch_size, rng):
         rng, tsrng = random.split(rng)
 
         # Generating timestamps for this batch
-        timestamps = random.randint(tsrng,
-                                    shape=(batch_images.shape[0],),
-                                    minval=0, maxval=timesteps)
+        timestamps = random.randint(
+            tsrng, shape=(batch_images.shape[0],), minval=0, maxval=timesteps
+        )
 
         # Generating the noise and noisy image for this batch
         noisy_images, noise = forward_noising(rng, batch_images, timestamps)
@@ -279,14 +279,23 @@ def train_epoch(epoch_num, state, train_ds, batch_size, rng):
     return state, train_loss
 
 
-
 from flax.training import train_state
 
 
 def create_train_state(rng):
     """Creates initial `TrainState`."""
     # Initializing model parameters
-    params = model.init(rng, [jnp.ones([1, 32, 32, 1]), jnp.ones([1,])])['params']
+    params = model.init(
+        rng,
+        [
+            jnp.ones([1, 32, 32, 1]),
+            jnp.ones(
+                [
+                    1,
+                ]
+            ),
+        ],
+    )["params"]
     # Initializing the Adam optimizer
     tx = optax.adam(1e-4)
     # Return the training state
@@ -314,7 +323,7 @@ def train(train_ds) -> train_state.TrainState:
 
         # Print output loss and log the state at the end of every epoch
         print(f"Training loss after epoch {epoch}: ", train_loss)
-        log_state.append(state) # Optional
+        log_state.append(state)  # Optional
 
     return state
 
@@ -324,29 +333,31 @@ def backward_denoising_ddpm(x_t, pred_noise, t):
     alpha_t = jnp.take(alpha, t)
     alpha_t_bar = jnp.take(alpha_bar, t)
 
-    eps_coef = (1 - alpha_t) / (1 - alpha_t_bar) ** .5
-    mean = 1 / (alpha_t ** 0.5) * (x_t - eps_coef * pred_noise)
+    eps_coef = (1 - alpha_t) / (1 - alpha_t_bar) ** 0.5
+    mean = 1 / (alpha_t**0.5) * (x_t - eps_coef * pred_noise)
 
     var = jnp.take(beta, t)
     z = random.normal(key=random.PRNGKey(r.randint(1, 100)), shape=x_t.shape)
 
-    return mean + (var ** 0.5) * z
-
+    return mean + (var**0.5) * z
 
 
 # Save a GIF using logged images
 
+
 def save_gif(img_list, path=""):
     # Transform images from [-1,1] to [0, 255]
-    imgs = (Image.fromarray(np.array((np.array(i) * 127.5) + 1, np.int32)) for i in img_list)
+    imgs = (
+        Image.fromarray(np.array((np.array(i) * 127.5) + 1, np.int32)) for i in img_list
+    )
 
     # Extract first image from iterator
     img = next(imgs)
 
     # Append the other images and save as GIF
-    img.save(fp=path, format='GIF', append_images=imgs,
-             save_all=True, duration=200, loop=0)
-
+    img.save(
+        fp=path, format="GIF", append_images=imgs, save_all=True, duration=200, loop=0
+    )
 
 
 def main():
@@ -357,9 +368,17 @@ def main():
     fig = plt.figure(figsize=(15, 30))
 
     for index, i in enumerate([10, 50, 100, 185]):
-        noisy_im, noise = forward_noising(random.PRNGKey(0), jnp.expand_dims(sample_mnist, 0), jnp.array([i,]))
-        plt.subplot(1, 4, index+1)
-        plt.imshow(jnp.squeeze(jnp.squeeze(noisy_im, -1),0), cmap='gray')
+        noisy_im, noise = forward_noising(
+            random.PRNGKey(0),
+            jnp.expand_dims(sample_mnist, 0),
+            jnp.array(
+                [
+                    i,
+                ]
+            ),
+        )
+        plt.subplot(1, 4, index + 1)
+        plt.imshow(jnp.squeeze(jnp.squeeze(noisy_im, -1), 0), cmap="gray")
 
     plt.savefig("output/image.png")
 
@@ -371,13 +390,13 @@ def main():
     # Generating Gaussian noise
     x = random.normal(random.PRNGKey(42), (1, 32, 32, 1))
 
-#     trained_state = log_state[-1]
+    #     trained_state = log_state[-1]
 
     # Create a list to store output images
     img_list_ddpm = []
 
     # Append the initial noise to the list of images
-    img_list_ddpm.append(jnp.squeeze(jnp.squeeze(x, 0),-1))
+    img_list_ddpm.append(jnp.squeeze(jnp.squeeze(x, 0), -1))
 
     # Iterate over T timesteps
     for i in tqdm(range(0, timesteps - 1)):
@@ -385,19 +404,19 @@ def main():
         t = jnp.expand_dims(jnp.array(timesteps - i - 1, jnp.int32), 0)
 
         # Predict noise using U-Net
-        pred_noise = model.apply({'params': trained_state.params}, [x, t])
+        pred_noise = model.apply({"params": trained_state.params}, [x, t])
 
         # Obtain the output from the noise using the formula seen before
         x = backward_denoising_ddpm(x, pred_noise, t)
 
         # Log the image after every 25 iterations
         if i % 25 == 0:
-            img_list_ddpm.append(jnp.squeeze(jnp.squeeze(x, 0),-1))
-            plt.imshow(jnp.squeeze(jnp.squeeze(x, 0),-1), cmap='gray')
+            img_list_ddpm.append(jnp.squeeze(jnp.squeeze(x, 0), -1))
+            plt.imshow(jnp.squeeze(jnp.squeeze(x, 0), -1), cmap="gray")
             plt.show()
 
     # Display the final generated image
-    plt.imshow(jnp.squeeze(jnp.squeeze(x, 0),-1), cmap='gray')
+    plt.imshow(jnp.squeeze(jnp.squeeze(x, 0), -1), cmap="gray")
     plt.show()
 
     # Save generated GIF

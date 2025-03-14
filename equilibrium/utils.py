@@ -1,13 +1,16 @@
 import os
 from typing import Callable
 
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
+import matplotlib.pyplot as plt
 import orbax.checkpoint as ocp
 
 
-def unsqueeze_to_match(source: jnp.ndarray, target: jnp.ndarray, how: str = "suffix") -> jnp.ndarray:
+def unsqueeze_to_match(
+    source: jnp.ndarray, target: jnp.ndarray, how: str = "suffix"
+) -> jnp.ndarray:
     """
     Unsqueeze the source tensor to match the dimensionality of the target tensor.
 
@@ -35,7 +38,9 @@ def unsqueeze_to_match(source: jnp.ndarray, target: jnp.ndarray, how: str = "suf
     return source
 
 
-def expand_tensor_like(input_tensor: jnp.ndarray, expand_to: jnp.ndarray) -> jnp.ndarray:
+def expand_tensor_like(
+    input_tensor: jnp.ndarray, expand_to: jnp.ndarray
+) -> jnp.ndarray:
     """`input_tensor` is a 1d vector of length equal to the batch size of `expand_to`,
     expand `input_tensor` to have the same shape as `expand_to` along all remaining dimensions.
 
@@ -58,12 +63,13 @@ def expand_tensor_like(input_tensor: jnp.ndarray, expand_to: jnp.ndarray) -> jnp
     return jnp.broadcast_to(t_expanded, expand_to.shape)
 
 
-
 def visualize_path(path, x0: jax.Array, x1: jax.Array, fig_path: str | None = None):
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        raise ValueError(f"visualize_path() requires matplotlib, but it's not installed")
+        raise ValueError(
+            f"visualize_path() requires matplotlib, but it's not installed"
+        )
     xs = [path.sample(x0, x1, jnp.array([t])).x_t for t in jnp.arange(0, 1.1, 0.1)]
     xs = jnp.vstack(xs)
     plt.scatter(xs[:, 0], xs[:, 1])
@@ -71,7 +77,6 @@ def visualize_path(path, x0: jax.Array, x1: jax.Array, fig_path: str | None = No
         plt.savefig(fig_path)
     else:
         plt.show()
-
 
 
 def save_model(model, ckpt_dir: str):
@@ -82,8 +87,12 @@ def save_model(model, ckpt_dir: str):
 
 
 cpu_device = jax.devices("cpu")[0]
+
+
 def set_cpu_sharding(x):
-    return jax.ShapeDtypeStruct(x.shape, x.dtype, sharding=jax.sharding.SingleDeviceSharding(cpu_device))
+    return jax.ShapeDtypeStruct(
+        x.shape, x.dtype, sharding=jax.sharding.SingleDeviceSharding(cpu_device)
+    )
 
 
 def load_model(f: Callable, ckpt_dir: str, to_cpu: bool = False):
@@ -96,3 +105,26 @@ def load_model(f: Callable, ckpt_dir: str, to_cpu: bool = False):
     state_restored = checkpointer.restore(ckpt_dir, abstract_state)
     model = nnx.merge(graphdef, rng_state, state_restored)
     return model
+
+
+def plot_samples(samples: jax.Array, path: str | None = None):
+    """
+    Arguments:
+    ----------
+    samples : jax.Array
+        Input image data of shape (B, H, W, C)
+    """
+    length = samples.shape[0]
+    n_rows = int(jnp.sqrt(length))
+    n_cols = int(jnp.ceil(length / n_rows))
+    fig, axs = plt.subplots(n_rows, n_cols)
+    for i in range(length):
+        sample = samples[i, :, :, :]
+        sample = sample - sample.min()
+        sample = sample / sample.max()
+        r, c = i // n_cols, i % n_cols
+        # print(f"r = {r}, c = {c}")
+        axs[r, c].imshow(sample)
+    plt.tight_layout()
+    if path:
+        fig.savefig(path)

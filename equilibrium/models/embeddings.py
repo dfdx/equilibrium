@@ -1,6 +1,8 @@
 import math
+
 import jax.numpy as jnp
 from flax import nnx
+
 
 # from https://github.com/madaan/minimal-text-diffusion/
 def timestep_embedding(timesteps, dim, max_period=10000):
@@ -20,7 +22,9 @@ def timestep_embedding(timesteps, dim, max_period=10000):
     args = timesteps[:, None].astype(jnp.float32) * freqs[None]
     embedding = jnp.concatenate([jnp.cos(args), jnp.sin(args)], axis=-1)
     if dim % 2:
-        embedding = jnp.concatenate([embedding, jnp.zeros_like(embedding[:, :1])], axis=-1)
+        embedding = jnp.concatenate(
+            [embedding, jnp.zeros_like(embedding[:, :1])], axis=-1
+        )
     return embedding
 
 

@@ -1,9 +1,10 @@
 # based on: https://github.com/facebookresearch/flow_matching/blob/main/flow_matching/path/affine.py
+import jax.numpy as jnp
+
 from equilibrium.flow.path.path import ProbPath
 from equilibrium.flow.path.path_sample import PathSample
 from equilibrium.flow.path.scheduler.scheduler import CondOTScheduler, Scheduler
 from equilibrium.utils import expand_tensor_like
-import jax.numpy as jnp
 
 
 class AffineProbPath(ProbPath):
@@ -85,7 +86,9 @@ class AffineProbPath(ProbPath):
 
         return PathSample(x_t=x_t, dx_t=dx_t, x_1=x_1, x_0=x_0, t=t)
 
-    def target_to_velocity(self, x_1: jnp.ndarray, x_t: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
+    def target_to_velocity(
+        self, x_1: jnp.ndarray, x_t: jnp.ndarray, t: jnp.ndarray
+    ) -> jnp.ndarray:
         r"""Convert from x_1 representation to velocity.
 
         | given :math:`X_1`.
@@ -111,7 +114,9 @@ class AffineProbPath(ProbPath):
 
         return a_t * x_t + b_t * x_1
 
-    def epsilon_to_velocity(self, epsilon: jnp.ndarray, x_t: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
+    def epsilon_to_velocity(
+        self, epsilon: jnp.ndarray, x_t: jnp.ndarray, t: jnp.ndarray
+    ) -> jnp.ndarray:
         r"""Convert from epsilon representation to velocity.
 
         | given :math:`\epsilon`.
@@ -137,7 +142,9 @@ class AffineProbPath(ProbPath):
 
         return a_t * x_t + b_t * epsilon
 
-    def velocity_to_target(self, velocity: jnp.ndarray, x_t: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
+    def velocity_to_target(
+        self, velocity: jnp.ndarray, x_t: jnp.ndarray, t: jnp.ndarray
+    ) -> jnp.ndarray:
         r"""Convert from velocity to x_1 representation.
 
         | given :math:`\dot{X}_t`.
@@ -163,7 +170,9 @@ class AffineProbPath(ProbPath):
 
         return a_t * x_t + b_t * velocity
 
-    def epsilon_to_target(self, epsilon: jnp.ndarray, x_t: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
+    def epsilon_to_target(
+        self, epsilon: jnp.ndarray, x_t: jnp.ndarray, t: jnp.ndarray
+    ) -> jnp.ndarray:
         r"""Convert from epsilon representation to x_1 representation.
 
         | given :math:`\epsilon`.
@@ -187,7 +196,9 @@ class AffineProbPath(ProbPath):
 
         return a_t * x_t + b_t * epsilon
 
-    def velocity_to_epsilon(self, velocity: jnp.ndarray, x_t: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
+    def velocity_to_epsilon(
+        self, velocity: jnp.ndarray, x_t: jnp.ndarray, t: jnp.ndarray
+    ) -> jnp.ndarray:
         r"""Convert from velocity to noise representation.
 
         | given :math:`\dot{X}_t`.
@@ -213,7 +224,9 @@ class AffineProbPath(ProbPath):
 
         return a_t * x_t + b_t * velocity
 
-    def target_to_epsilon(self, x_1: jnp.ndarray, x_t: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
+    def target_to_epsilon(
+        self, x_1: jnp.ndarray, x_t: jnp.ndarray, t: jnp.ndarray
+    ) -> jnp.ndarray:
         r"""Convert from x_1 representation to velocity.
 
         | given :math:`X_1`.

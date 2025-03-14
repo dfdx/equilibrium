@@ -1,13 +1,10 @@
 import jax
 import jax.numpy as jnp
+from fabrique.loading import from_pretrained
+from fabrique.models.bert.modeling import Embeddings, ModelArgs, TransformerBlock
 from flax import nnx
 
-from fabrique.models.bert.modeling import (
-    ModelArgs, Embeddings, TransformerBlock
-)
-from fabrique.loading import from_pretrained
 from equilibrium.models.embeddings import timestep_embedding
-
 
 
 class BertLM(nnx.Module):
@@ -32,10 +29,7 @@ class BertLM(nnx.Module):
         self.output = nnx.Linear(args.dim, args.vocab_size, use_bias=False, rngs=rngs)
 
     def embed(
-        self,
-        tokens: jax.Array,
-        segments: jax.Array | None = None,
-        deterministic=True
+        self, tokens: jax.Array, segments: jax.Array | None = None, deterministic=True
     ) -> jax.Array:
         if segments is None:
             segments = jnp.zeros_like(tokens)
@@ -67,7 +61,6 @@ class BertLM(nnx.Module):
             h = layer(h, mask, deterministic=deterministic)
         return h
 
-
     @staticmethod
     def from_bert(model_id: str = "google-bert/bert-base-uncased", **kwargs):
         tokenizer, bert, hf_config = from_pretrained(model_id, **kwargs)
@@ -79,11 +72,16 @@ class BertLM(nnx.Module):
         return tokenizer, model, hf_config
 
 
-
-
 from tokenizers import Tokenizer
 
-def tokenize(tokenizer: Tokenizer, texts: list[str], pad_id: int = 0, pad_to_multiple_of: int = 128, max_length: int = 512):
+
+def tokenize(
+    tokenizer: Tokenizer,
+    texts: list[str],
+    pad_id: int = 0,
+    pad_to_multiple_of: int = 128,
+    max_length: int = 512,
+):
     # TODO: use mask for padding
     tokenizer.enable_padding(pad_id=pad_id, pad_to_multiple_of=pad_to_multiple_of)
     tokenizer.enable_truncation(max_length=max_length)

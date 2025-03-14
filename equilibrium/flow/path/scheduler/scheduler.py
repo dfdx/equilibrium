@@ -2,11 +2,11 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-
 from typing import Union
 
 import jax.numpy as jnp
 from jax import grad
+
 
 @dataclass
 class SchedulerOutput:

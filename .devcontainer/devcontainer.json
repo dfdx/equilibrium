@@ -2,22 +2,19 @@
 	"name": "Existing Dockerfile",
 	"build": {
 		"context": "..",
-		"dockerfile": "../Dockerfile",
-		"target": "build-test"
+		"dockerfile": "../Dockerfile"
 	},
 
 	"mounts": [
 		"source=${localEnv:HOME}/.ssh/,target=/home/devpod/.ssh,type=bind,consistency=cached",
 		"source=${localEnv:HOME}/.cache/huggingface/,target=/home/devpod/.cache/huggingface/,type=bind,consistency=cached",
 		"source=${localEnv:HOME}/data/,target=/data/,type=bind,consistency=cached"
-		//"source=${localEnv:HOME}/tensorflow_datasets/,target=/home/devpod/tensorflow_datasets,type=bind,consistency=cached"
 	],
 
 	"containerEnv": {
 		"HF_TOKEN": "${localEnv:HF_TOKEN_PERSONAL}",
 		"PYTHONPATH": "${PYTHONPATH}:fabrique",
-		"JAX_COMPILATION_CACHE_DIR": "/tmp/jax_cache",
-		// "JAX_DEBUG_LOG_MODULES": "jax._src.compiler,jax._src.lru_cache"
+		"JAX_COMPILATION_CACHE_DIR": "/tmp/jax_cache"
 	}//,
 
 	// "runArgs": ["--gpus", "all"]

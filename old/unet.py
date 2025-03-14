@@ -1,9 +1,10 @@
+import math
 from functools import partial
 
-import math
 import jax
 import jax.numpy as jnp
 from flax import nnx
+
 from equilibrium.normalization import GroupNorm
 
 
@@ -39,51 +40,57 @@ class TimeEmbedding(nnx.Module):
         return t
 
 
-
 # Standard dot-product attention with eight heads.
 class Attention(nnx.Module):
 
     def __init__(
-            self,
-            dim: int,
-            num_heads: int = 8,
-            use_bias: bool = False,
-            rngs: nnx.Rngs = nnx.Rngs(params=0)
+        self,
+        dim: int,
+        num_heads: int = 8,
+        use_bias: bool = False,
+        rngs: nnx.Rngs = nnx.Rngs(params=0),
     ):
         self.dim = dim
         self.num_heads = num_heads
         linear = partial(
-            nnx.Linear, use_bias=use_bias, kernel_init=nnx.initializers.xavier_uniform(), rngs=rngs
+            nnx.Linear,
+            use_bias=use_bias,
+            kernel_init=nnx.initializers.xavier_uniform(),
+            rngs=rngs,
         )
         self.wqkv = linear(dim, dim * 3)
         self.wo = linear(dim, dim)
 
     def __call__(self, x):
         bs, h, w, channels = x.shape
-        x = x.reshape(bs, h*w, channels)
+        x = x.reshape(bs, h * w, channels)
         bs, n, channels = x.shape
         qkv = self.wqkv(x)
-        qkv = jnp.reshape(
-            qkv, (bs, n, 3, self.num_heads, channels // self.num_heads)
-        )
-        qkv = jnp.transpose(qkv, (2, 0, 3, 1, 4))   # [3, bs, n_heads, n=seq_len, head_dim]
+        qkv = jnp.reshape(qkv, (bs, n, 3, self.num_heads, channels // self.num_heads))
+        qkv = jnp.transpose(
+            qkv, (2, 0, 3, 1, 4)
+        )  # [3, bs, n_heads, n=seq_len, head_dim]
         q, k, v = qkv[0], qkv[1], qkv[2]
         scale = (self.dim // self.num_heads) ** -0.5
         attention = (q @ jnp.swapaxes(k, -2, -1)) * scale
         attention = nnx.softmax(attention, axis=-1)
         x = (attention @ v).swapaxes(1, 2).reshape(bs, n, channels)
         x = self.wo(x)
-        x = jnp.reshape(x, (bs, int(x.shape[1]** 0.5), int(x.shape[1]** 0.5), -1))
+        x = jnp.reshape(x, (bs, int(x.shape[1] ** 0.5), int(x.shape[1] ** 0.5), -1))
         return x
 
 
 class ConvBlock(nnx.Module):
 
-    def __init__(self, dim: int = 32, groups: int = 8, rngs: nnx.Rngs = nnx.Rngs(params=0)):
+    def __init__(
+        self, dim: int = 32, groups: int = 8, rngs: nnx.Rngs = nnx.Rngs(params=0)
+    ):
         self.dim = dim
         self.groups = groups
         self.conv = nnx.Conv(self.dim, self.dim, (3, 3), rngs=rngs)
-        self.norm = GroupNorm(num_features=dim, num_groups=self.groups, rngs=rngs)  # num_features=dim -- guessed
+        self.norm = GroupNorm(
+            num_features=dim, num_groups=self.groups, rngs=rngs
+        )  # num_features=dim -- guessed
 
     def __call__(self, x):
         conv = self.conv(x)
@@ -94,18 +101,26 @@ class ConvBlock(nnx.Module):
 
 class ResnetBlock(nnx.Module):
 
-    def __init__(self, dim: int = 32, groups: int = 8, rngs: nnx.Rngs = nnx.Rngs(params=0)):
+    def __init__(
+        self, dim: int = 32, groups: int = 8, rngs: nnx.Rngs = nnx.Rngs(params=0)
+    ):
         self.dim = dim
         self.groups = groups
         self.block1 = ConvBlock(dim, groups, rngs=rngs)
-        self.dense = nnx.Linear(128, dim, rngs=rngs)   # 128 = original dim * 4 - size of time embeddings
+        self.dense = nnx.Linear(
+            128, dim, rngs=rngs
+        )  # 128 = original dim * 4 - size of time embeddings
         self.block2 = ConvBlock(dim, groups, rngs=rngs)
-        self.conv = nnx.Conv(dim, dim, (1, 1), padding="SAME", rngs=rngs)   # 1st arg is guessed
+        self.conv = nnx.Conv(
+            dim, dim, (1, 1), padding="SAME", rngs=rngs
+        )  # 1st arg is guessed
 
     def __call__(self, x, t_emb=None):
         x = self.block1(x)
         if t_emb is not None:
-            assert len(x.shape) == len(t_emb.shape) + 2, "Input and time embedding have incompatible shapes"
+            assert (
+                len(x.shape) == len(t_emb.shape) + 2
+            ), "Input and time embedding have incompatible shapes"
             t_emb = nnx.silu(t_emb)
             t_emb = self.dense(t_emb)
             x = jnp.expand_dims(jnp.expand_dims(t_emb, 1), 1) + x
@@ -114,15 +129,25 @@ class ResnetBlock(nnx.Module):
         return x + res_conv
 
 
-
 class Down(nnx.Module):
 
-    def __init__(self, in_channels: int, out_channels: int | None, num_groups: int, /, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int | None,
+        num_groups: int,
+        /,
+        rngs: nnx.Rngs,
+    ):
         self.resnet_block = ResnetBlock(in_channels, num_groups, rngs=rngs)
         self.attention = Attention(in_channels, rngs=rngs)
-        self.norm = GroupNorm(num_features=in_channels, num_groups=num_groups, rngs=rngs)
+        self.norm = GroupNorm(
+            num_features=in_channels, num_groups=num_groups, rngs=rngs
+        )
         if out_channels:
-            self.down_conv = nnx.Conv(in_channels, out_channels, (4,4), (2,2), rngs=rngs)
+            self.down_conv = nnx.Conv(
+                in_channels, out_channels, (4, 4), (2, 2), rngs=rngs
+            )
 
     def __call__(self, x, time_emb):
         x = self.resnet_block(x, time_emb)
@@ -130,7 +155,7 @@ class Down(nnx.Module):
         norm = self.norm(att)
         x = norm + x
         if hasattr(self, "down_conv"):
-            downsized = self.down_conv(x)    # not used in the last step
+            downsized = self.down_conv(x)  # not used in the last step
             return x, downsized
         else:
             return x, x
@@ -138,12 +163,23 @@ class Down(nnx.Module):
 
 class Up(nnx.Module):
 
-    def __init__(self, in_channels: int, out_channels: int | None, num_groups: int, /, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int | None,
+        num_groups: int,
+        /,
+        rngs: nnx.Rngs,
+    ):
         self.resnet_block = ResnetBlock(in_channels, num_groups, rngs=rngs)
         self.attention = Attention(in_channels, rngs=rngs)
-        self.norm = GroupNorm(num_features=in_channels, num_groups=num_groups, rngs=rngs)
+        self.norm = GroupNorm(
+            num_features=in_channels, num_groups=num_groups, rngs=rngs
+        )
         if out_channels:
-            self.up_conv = nnx.ConvTranspose(in_channels, out_channels, (4,4), (2,2), rngs=rngs)
+            self.up_conv = nnx.ConvTranspose(
+                in_channels, out_channels, (4, 4), (2, 2), rngs=rngs
+            )
 
     def __call__(self, x, time_emb):
         x = self.resnet_block(x, time_emb)
@@ -151,20 +187,30 @@ class Up(nnx.Module):
         norm = self.norm(att)
         x = norm + x
         if hasattr(self, "up_conv"):
-            x = self.up_conv(x)        # not used in the last step
+            x = self.up_conv(x)  # not used in the last step
         return x
 
 
 class UNet(nnx.Module):
 
-    def __init__(self, dim: int = 8, dim_scale_factor: tuple = (1, 2, 4, 8), num_groups: int = 8, in_channels: int = 1, out_channels: int = 1, rngs: nnx.Rngs = nnx.Rngs(params=0)):
+    def __init__(
+        self,
+        dim: int = 8,
+        dim_scale_factor: tuple = (1, 2, 4, 8),
+        num_groups: int = 8,
+        in_channels: int = 1,
+        out_channels: int = 1,
+        rngs: nnx.Rngs = nnx.Rngs(params=0),
+    ):
         dims = [dim * i for i in dim_scale_factor]
         self.dims = dims
         # self.dim = dim
         self.dim_scale_factor = dim_scale_factor
         self.num_groups = num_groups
         self.time_embedding = TimeEmbedding(dim)
-        self.in_conv = nnx.Conv(in_channels, dim, (7, 7), padding=((3,3), (3,3)), rngs=rngs)
+        self.in_conv = nnx.Conv(
+            in_channels, dim, (7, 7), padding=((3, 3), (3, 3)), rngs=rngs
+        )
         # down
         self.down_blocks = []
         for i, dim in enumerate(dims):
@@ -177,7 +223,9 @@ class UNet(nnx.Module):
         mid_dim = dims[-1]
         self.mid_resnet = ResnetBlock(mid_dim, self.num_groups, rngs=rngs)
         self.mid_attn = Attention(dim, rngs=rngs)
-        self.mid_norm = GroupNorm(num_features=mid_dim, num_groups=num_groups, rngs=rngs)
+        self.mid_norm = GroupNorm(
+            num_features=mid_dim, num_groups=num_groups, rngs=rngs
+        )
         self.mid_resnet2 = ResnetBlock(mid_dim, self.num_groups, rngs=rngs)
         # up
         self.up_blocks = []
@@ -189,9 +237,9 @@ class UNet(nnx.Module):
                 block = Up(r_dims[i] * 2, None, num_groups, rngs=rngs)
             self.up_blocks.append(block)
         self.out_resnet = ResnetBlock(dim * 2, self.num_groups, rngs=rngs)
-        self.out_conv = nnx.Conv(dim * 2, out_channels, (1,1), padding="SAME", rngs=rngs)
-
-
+        self.out_conv = nnx.Conv(
+            dim * 2, out_channels, (1, 1), padding="SAME", rngs=rngs
+        )
 
     def __call__(self, x, time):
         # channels = x.shape[-1]
@@ -225,10 +273,9 @@ class UNet(nnx.Module):
 ###########################################################
 
 
-
 def get_datasets():
-  # Load the MNIST dataset
-    train_ds = tfds.load('mnist', as_supervised=True, split="train")
+    # Load the MNIST dataset
+    train_ds = tfds.load("mnist", as_supervised=True, split="train")
 
     # Normalization helper
     def preprocess(x, y):
@@ -240,7 +287,6 @@ def get_datasets():
 
     # Return numpy arrays instead of TF tensors while iterating
     return tfds.as_numpy(train_ds)
-
 
 
 def main():

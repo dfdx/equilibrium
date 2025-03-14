@@ -1,4 +1,3 @@
-
 def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
     """
     Get a pre-defined beta schedule for the given name.
@@ -14,7 +13,9 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
         scale = 1000 / num_diffusion_timesteps
         beta_start = scale * 0.0001
         beta_end = scale * 0.02
-        return np.linspace(beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64)
+        return np.linspace(
+            beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
+        )
     elif schedule_name == "cosine":
         return betas_for_alpha_bar(
             num_diffusion_timesteps,
@@ -34,7 +35,9 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
         scale = 1000 / num_diffusion_timesteps
         beta_start = scale * 0.0001 + 0.01
         beta_end = scale * 0.02 + 0.01
-        return np.linspace(beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64)
+        return np.linspace(
+            beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
+        )
     elif schedule_name == "pw_lin":
         scale = 1000 / num_diffusion_timesteps
         beta_start = scale * 0.0001 + 0.01
@@ -49,11 +52,6 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
         raise NotImplementedError(f"unknown beta schedule: {schedule_name}")
 
 
-
-
-
-
-
 alphas = 1.0 - betas
 self.alphas_cumprod = np.cumprod(alphas, axis=0)
 self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
@@ -66,7 +64,6 @@ self.sqrt_one_minus_alphas_cumprod = np.sqrt(1.0 - self.alphas_cumprod)
 self.log_one_minus_alphas_cumprod = np.log(1.0 - self.alphas_cumprod)
 self.sqrt_recip_alphas_cumprod = np.sqrt(1.0 / self.alphas_cumprod)
 self.sqrt_recipm1_alphas_cumprod = np.sqrt(1.0 / self.alphas_cumprod - 1)
-
 
 
 def q_sample(self, x_start, t, noise=None):
@@ -85,11 +82,9 @@ def q_sample(self, x_start, t, noise=None):
     assert noise.shape == x_start.shape
     return (
         _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
-        + _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
+        + _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape)
+        * noise
     )
-
-
-
 
 
 x_start = self.get_x_start(x_start_mean, std)

@@ -3,12 +3,12 @@
 # from transformers import BertEncoder
 # from transformers.models.bert.modeling_bert import BertEncoder
 import math
+
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
-
-from fabrique.models.bert.modeling import Transformer as Bert
 from fabrique.loading import from_pretrained
+from fabrique.models.bert.modeling import Transformer as Bert
 
 # import torch as th
 # import torch.nn as nn
@@ -36,10 +36,10 @@ def timestep_embedding(timesteps, dim, max_period=10000):
     args = timesteps[:, None].astype(jnp.float32) * freqs[None]
     embedding = jnp.concatenate([jnp.cos(args), jnp.sin(args)], axis=-1)
     if dim % 2:
-        embedding = jnp.concatenate([embedding, jnp.zeros_like(embedding[:, :1])], axis=-1)
+        embedding = jnp.concatenate(
+            [embedding, jnp.zeros_like(embedding[:, :1])], axis=-1
+        )
     return embedding
-
-
 
 
 def main():
@@ -47,7 +47,6 @@ def main():
     x = self.tokenizer.encode_batch(["ping pong"])[0].ids
     x = jnp.array(x).reshape(1, -1)
     # todo: what is the shape of x? why lm_head is not used?
-
 
 
 class TransformerModel(nnx.Module):
@@ -81,7 +80,7 @@ class TransformerModel(nnx.Module):
         config_name="bert-base-uncased",
         vocab_size=None,
         logits_mode=1,
-        rngs: nnx.Rngs = nnx.Rngs(0)
+        rngs: nnx.Rngs = nnx.Rngs(0),
     ):
         self.in_channels = in_channels
         self.model_channels = model_channels
@@ -100,8 +99,9 @@ class TransformerModel(nnx.Module):
 
         time_embed_dim = model_channels * 4
 
-        self.tokenizer, self.temp_bert, self.config  = from_pretrained(self.config_name)
+        self.tokenizer, self.temp_bert, self.config = from_pretrained(self.config_name)
         import argparse
+
         self.config = argparse.Namespace(**self.config)
         del self.temp_bert.pooler
         self.input_transformers = self.temp_bert
@@ -121,14 +121,15 @@ class TransformerModel(nnx.Module):
         #     "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1))
         # )
 
-        self.LayerNorm = nnx.LayerNorm(self.config.hidden_size, epsilon=self.config.layer_norm_eps, rngs=rngs)
+        self.LayerNorm = nnx.LayerNorm(
+            self.config.hidden_size, epsilon=self.config.layer_norm_eps, rngs=rngs
+        )
         self.dropout = nnx.Dropout(self.config.hidden_dropout_prob, rngs=rngs)
 
     # def build_xstart_predictor(self):
     #     # self.tokenizer, self.temp_bert, self.config  = from_pretrained(self.config_name)
     #     del self.temp_bert.pooler
     #     self.input_transformers = self.temp_bert
-
 
     def build_input_output_projections(self):
         if self.use_pretrained_embeddings:
@@ -138,11 +139,15 @@ class TransformerModel(nnx.Module):
             self.input_up_proj = nnx.Sequential(
                 nnx.Linear(self.in_channels, self.config.hidden_size, rngs=self.rngs),
                 jnp.tanh,
-                nnx.Linear(self.config.hidden_size, self.config.hidden_size, rngs=self.rngs),
+                nnx.Linear(
+                    self.config.hidden_size, self.config.hidden_size, rngs=self.rngs
+                ),
             )
 
             self.output_down_proj = nnx.Sequential(
-                nnx.Linear(self.config.hidden_size, self.config.hidden_size, rngs=self.rngs),
+                nnx.Linear(
+                    self.config.hidden_size, self.config.hidden_size, rngs=self.rngs
+                ),
                 jnp.tanh,
                 nnx.Linear(self.config.hidden_size, self.out_channels, rngs=self.rngs),
             )
@@ -153,19 +158,29 @@ class TransformerModel(nnx.Module):
             self.position_embeddings = self.temp_bert.embeddings.position_embeddings
         else:
             assert self.vocab_size is not None
-            self.word_embedding = nnx.Embed(self.vocab_size, self.in_channels, rngs=self.rngs)
+            self.word_embedding = nnx.Embed(
+                self.vocab_size, self.in_channels, rngs=self.rngs
+            )
             self.position_embeddings = nnx.Embed(
-                self.config.max_position_embeddings, self.config.hidden_size, rngs=self.rngs
+                self.config.max_position_embeddings,
+                self.config.hidden_size,
+                rngs=self.rngs,
             )
 
-        self.lm_head = nnx.Linear(self.in_channels, self.word_embedding.embedding.value.shape[0], rngs=self.rngs)
+        self.lm_head = nnx.Linear(
+            self.in_channels,
+            self.word_embedding.embedding.value.shape[0],
+            rngs=self.rngs,
+        )
 
         # if self.freeze_embeddings:
         #     self.word_embedding.weight.requires_grad = False
         #     self.position_embeddings.weight.requires_grad = False
 
-        #with th.no_grad():
-        self.lm_head.kernel.value = self.word_embedding.embedding.value.T  # note: params aren't bound
+        # with th.no_grad():
+        self.lm_head.kernel.value = (
+            self.word_embedding.embedding.value.T
+        )  # note: params aren't bound
 
     def get_embeds(self, input_ids):
         return self.word_embedding(input_ids)

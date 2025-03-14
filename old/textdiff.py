@@ -1,18 +1,16 @@
 from functools import partial
-import jax
-import optax
-import jax.numpy as jnp
+
 import flax.nnx as nnx
+import jax
+import jax.numpy as jnp
+import optax
 import orbax.checkpoint
-
-from datasets import load_dataset, Dataset
+from datasets import Dataset, load_dataset
 from tokenizers import Tokenizer
-
 from tqdm import tqdm
 
 from equilibrium.models.bertlm import BertLM, tokenize
 from equilibrium.models.schedulers import DDPMScheduler
-
 
 
 def get_dataset():
@@ -26,7 +24,9 @@ def diffusion_loss_fn(model, noise_scheduler, x):
     # Generate random noise
     noise = jax.random.normal(jax.random.key(0), x.shape)
     # Sample random timesteps
-    timesteps = jax.random.randint(jax.random.key(0), (x.shape[0],), 0, noise_scheduler.num_train_timesteps)
+    timesteps = jax.random.randint(
+        jax.random.key(0), (x.shape[0],), 0, noise_scheduler.num_train_timesteps
+    )
     # Add noise to the input
     noisy_x = noise_scheduler.add_noise(x, noise, timesteps)
     # Predict the noise
@@ -46,7 +46,15 @@ def loss_fn(model, noise_scheduler, tokens: jax.Array):
     return diff_loss + ce_loss
 
 
-def train(model, noise_scheduler, data: Dataset, tokenizer: Tokenizer, num_epochs: int = 10, batch_size: int = 8, learning_rate=1e-5):
+def train(
+    model,
+    noise_scheduler,
+    data: Dataset,
+    tokenizer: Tokenizer,
+    num_epochs: int = 10,
+    batch_size: int = 8,
+    learning_rate=1e-5,
+):
     optimizer = nnx.Optimizer(model, optax.adam(learning_rate))
 
     losses = []
@@ -63,7 +71,7 @@ def train(model, noise_scheduler, data: Dataset, tokenizer: Tokenizer, num_epoch
     return model
 
 
-def sample(model, noise_scheduler, shape = (8, 128, 768), rng: nnx.Rngs = nnx.Rngs(0)):
+def sample(model, noise_scheduler, shape=(8, 128, 768), rng: nnx.Rngs = nnx.Rngs(0)):
     # Start from pure noise
     x = jax.random.normal(rng(), shape)
 
@@ -82,12 +90,10 @@ def main():
     jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
     jax.config.update("jax_explain_cache_misses", True)
 
-
     tokenizer, model, _ = BertLM.from_bert()
     noise_scheduler = DDPMScheduler()
     data = get_dataset()
     model = train(model, noise_scheduler, data, tokenizer, num_epochs=10)
-
 
     x_gen = sample(model, noise_scheduler)
     tokens_gen = model.get_tokens(x_gen)
@@ -109,7 +115,6 @@ def main():
     tokens = tokenize(tokenizer, ["Hello, world!", "I am an olive"])
     x = model.embed(tokens_gen)
 
-
     num_epochs: int = 10
     batch_size: int = 8
     learning_rate = 1e-5
@@ -117,19 +122,18 @@ def main():
     texts = next(iter(data.iter(batch_size=batch_size)))
 
 
-
-
 def main_sharding():
     from typing import Optional
+
     import numpy as np
     from jax.experimental import mesh_utils
-    from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
-    mesh = Mesh(devices=mesh_utils.create_device_mesh((2, 1, 1)),
-                axis_names=("b", "s", "d"))
+    from jax.sharding import Mesh, NamedSharding
+    from jax.sharding import PartitionSpec as P
+
+    mesh = Mesh(
+        devices=mesh_utils.create_device_mesh((2, 1, 1)), axis_names=("b", "s", "d")
+    )
     x = jax.device_put(x, NamedSharding(mesh, P("b", "s", "d")))
-
-
-
 
 
 # class DiffusionModel(nnx.Module):

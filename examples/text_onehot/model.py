@@ -106,8 +106,7 @@ class Attention(nnx.Module):
     def __call__(
         self,
         x: jax.Array,
-        start_pos: int,
-        padding_mask: jax.Array | None = None,
+        padding_mask: jax.Array
     ):
         """
         Forward pass of the attention module.
@@ -121,9 +120,10 @@ class Attention(nnx.Module):
         Returns:
             jax.Array: Output array after attention.
         """
+        start_pos = 0
         bsz, seq_len, _ = x.shape
         q_len = seq_len
-        kv_len = self.args.max_seq_len if self.args.use_cache else seq_len
+        kv_len = seq_len
 
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
@@ -142,13 +142,6 @@ class Attention(nnx.Module):
         if padding_mask is not None:
             pad_attn_mask = padding_to_attention_mask(padding_mask, shape=mask.shape)
             mask = nnx.combine_masks(mask, pad_attn_mask).astype(bool)  # type: ignore
-
-        if self.args.use_cache:
-            # shape of kv after concatenating to the cache is
-            # [bs, max_seq_len, n_heads, head_dim]
-            xk, xv, mask = concatenate_to_cache(
-                self.cache_k, self.cache_v, xk, xv, xq, mask, start_pos
-            )
 
         output = jax.nn.dot_product_attention(xq, xk, xv, mask=mask[:, None, :, :])
         output = output.reshape(output.shape[:2] + (self.args.dim,))
@@ -243,12 +236,7 @@ class TransformerBlock(nnx.Module):
             args.dim, eps=args.norm_eps, param_dtype=args.param_dtype
         )
 
-    def __call__(
-        self,
-        x: jax.Array,
-        start_pos: int,
-        padding_mask: jax.Array | None = None,
-    ):
+    def __call__(self, x: jax.Array, padding_mask: jax.Array):
         """
         Perform a forward pass through the TransformerBlock.
 
@@ -260,11 +248,7 @@ class TransformerBlock(nnx.Module):
             jax.Array: Output tensor after applying attention and feedforward layers.
 
         """
-        h = x + self.attention(
-            self.attention_norm(x),
-            start_pos,
-            padding_mask=padding_mask,
-        )
+        h = x + self.attention(self.attention_norm(x), padding_mask)
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
@@ -293,13 +277,13 @@ class Transformer(nnx.Module):
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers
 
-        self.tok_embeddings = nnx.Embed(
-            num_embeddings=args.vocab_size,
-            features=args.dim,
-            dtype=args.dtype,
-            param_dtype=args.param_dtype,
-            rngs=rngs,
-        )
+        # self.tok_embeddings = nnx.Embed(
+        #     num_embeddings=args.vocab_size,
+        #     features=args.dim,
+        #     dtype=args.dtype,
+        #     param_dtype=args.param_dtype,
+        #     rngs=rngs,
+        # )
 
         sincos = Static(
             create_sinusoidal_positions(args.max_seq_len, args.dim // args.n_heads)
@@ -316,27 +300,9 @@ class Transformer(nnx.Module):
         self.norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.output = nnx.Linear(args.dim, args.vocab_size, use_bias=False, rngs=rngs)
 
-    def __call__(
-        self, tokens: jax.Array, start_pos: int, padding_mask: jax.Array | None = None
-    ):
-        """
-        Perform a forward pass through the Transformer model.
-
-        Args:
-            tokens (jax.Array): Input token indices.
-            start_pos (int): Starting position for attention caching.
-            padding_mask (jax.Array | None): Padding mask of size (bsz, kv_len), dtype = bool.
-
-        Returns:
-            jax.Array: Output logits after applying the Transformer model.
-        """
-        h = self.tok_embeddings(tokens)
+    def __call__(self, x: jax.Array, padding_mask: jax.Array):
+        h = x
         for i, layer in enumerate(self.layers):
-            h = layer(
-                h,
-                start_pos,
-                padding_mask=padding_mask,
-            )
+            h = layer(h, padding_mask)
         h = self.norm(h)
-        output = self.output(h).astype("float32")
-        return output
+        return h

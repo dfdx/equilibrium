@@ -1,6 +1,8 @@
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build-base
 
 
+ARG JAX_PLUGIN=cuda
+
 ## Basic system setup
 
 ENV user=devpod
@@ -76,7 +78,7 @@ RUN pip install wheel
 
 
 # add specific version of JAX directry to the container
-RUN pip install jax["cuda12"]==0.5.0
+RUN pip install jax["${JAX_PLUGIN}"]==0.5.0
 
 COPY --chown=${user}:${user} ./pyproject.toml /home/${user}/
 RUN pip install pip-tools

@@ -16,6 +16,7 @@ from fabrique.models.common.embeddings import (
 from fabrique.models.common.norm import RMSNorm
 from fabrique.models.common.utils import padding_to_attention_mask
 from fabrique.utils import check_and_update_fields
+from equilibrium.models.embeddings import timestep_embedding
 
 
 @dataclass
@@ -300,8 +301,11 @@ class Transformer(nnx.Module):
         self.norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.output = nnx.Linear(args.dim, args.vocab_size, use_bias=False, rngs=rngs)
 
-    def __call__(self, x: jax.Array, padding_mask: jax.Array):
+    def __call__(self, x: jax.Array, padding_mask: jax.Array, t: jax.Array | None = None):
         h = x
+        if t is not None:
+            t_emb = timestep_embedding(t, x.shape[-1])[:, None, :]
+            h += t_emb
         for i, layer in enumerate(self.layers):
             h = layer(h, padding_mask)
         h = self.norm(h)

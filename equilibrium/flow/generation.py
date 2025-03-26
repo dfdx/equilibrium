@@ -9,11 +9,11 @@ def midpoint_step(model, x_t, t_start, t_end):
     t_end = t_end.reshape(-1)
     dt = t_end - t_start
     # Step 1: Compute the slope at the beginning of the interval
-    k1 = model(x=x_t, timesteps=t_start.reshape(1), extra={})
+    k1 = model(x=x_t, timesteps=t_start.reshape(1), extra={"labels": jnp.array([0])})
     # Step 2: Estimate the state at the midpoint
     x_mid = x_t + (dt / 2) * k1
     # Step 3: Compute the slope at the midpoint
-    k2 = model(x=x_mid, timesteps=t_start + dt / 2, extra={})
+    k2 = model(x=x_mid, timesteps=t_start + dt / 2, extra={"labels": jnp.array([0])})
     # Step 4: Update the state using the midpoint slope
     x_next = x_t + dt * k2
     return x_next

@@ -134,15 +134,17 @@ class Attention(nnx.Module):
 
         xq, xk = apply_rotary_pos_emb(xq, xk, self.sincos.value, start_pos)
 
-        # apply masks. note: masks have shape (bsz, q_len, kv_len)
-        # kv_len depends on the use of cache - see its definition above
-        mask = jax.lax.dynamic_slice(
-            self.full_causal_mask.value, (0, start_pos, 0), (1, q_len, kv_len)
-        )
-        mask = jnp.broadcast_to(mask, (bsz, *mask.shape[1:]))
-        if padding_mask is not None:
-            pad_attn_mask = padding_to_attention_mask(padding_mask, shape=mask.shape)
-            mask = nnx.combine_masks(mask, pad_attn_mask).astype(bool)  # type: ignore
+
+        # mask = jax.lax.dynamic_slice(
+        #     self.full_causal_mask.value, (0, start_pos, 0), (1, q_len, kv_len)
+        # )
+        # mask = jnp.broadcast_to(mask, (bsz, *mask.shape[1:]))
+        # if padding_mask is not None:
+        #     pad_attn_mask = padding_to_attention_mask(padding_mask, shape=mask.shape)
+        #     mask = nnx.combine_masks(mask, pad_attn_mask).astype(bool)  # type: ignore
+
+        # using only padding mask
+        mask = padding_to_attention_mask(padding_mask) # , shape=mask.shape)
 
         output = jax.nn.dot_product_attention(xq, xk, xv, mask=mask[:, None, :, :])
         output = output.reshape(output.shape[:2] + (self.args.dim,))

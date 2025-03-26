@@ -80,9 +80,9 @@ def training():
 
 
 def sampling(model_path: str):
-    # model_path = "/data/equilibrium/unet/49/"
+    model_path = "/data/equilibrium/unet/49/"
     model = load_model(lambda: UNetModel(3, rngs=nnx.Rngs(28)), model_path, to_cpu=True)
-    rngs = nnx.Rngs(113)
+    rngs = nnx.Rngs(2)
     noise = jax.random.normal(rngs(), (1, 64, 64, 3))
     samples = generate(model, noise, n_steps=8, method="midpoint")
     plot_samples(samples, "output/generated.jpg")

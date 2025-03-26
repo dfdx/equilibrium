@@ -1,10 +1,11 @@
-import shutil
+import traceback
 import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
 import tensorflow as tf
+from datetime import datetime
 from matplotlib import pyplot as plt
 from datasets import load_dataset
 from tqdm import tqdm
@@ -17,11 +18,13 @@ from examples.text_onehot.encoder import OneHotEncoder, build_char_vocab
 from examples.text_onehot.model import Transformer, ModelArgs
 
 
-MODEL_PATH = "output/ckpt-text"
+RUN_TAG = datetime.now().strftime('%Y-%m-%d_%H-%M')
+TENSORBOARD_PATH = f"/tmp/tensorboard/{RUN_TAG}"
+MODEL_PATH = f"output/ckpt-text/{RUN_TAG}"
 N_EPOCHS = 20
 
 
-summary_writer = tf.summary.create_file_writer("/tmp/tensorboard")
+summary_writer = tf.summary.create_file_writer(TENSORBOARD_PATH)
 
 
 def loss_fn(
@@ -57,9 +60,6 @@ def train_step(
 
 
 def training():
-    shutil.rmtree("output/ckpt-text")
-    # shutil.rmtree("/tmp/tensorboard")
-
     rngs = nnx.Rngs(params=108, data=92, time=319)
     path = CondOTProbPath()
     bsz, max_length = 2, 32
@@ -92,8 +92,11 @@ def training():
                 with summary_writer.as_default():
                     tf.summary.scalar("loss", loss, step=step)
                 step += 1
+            except KeyboardInterrupt as e:
+                raise KeyboardInterrupt("Manually interrupted")
             except:
                 print(f"Failed to process batch #{pbar.n}")
+                traceback.print_exc()
         pbar.write(f"==> epoch {epoch}: avg loss = {jnp.array(epoch_losses).mean()}")
         save_model(model, MODEL_PATH + f"/{epoch}")
 

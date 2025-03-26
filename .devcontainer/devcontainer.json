@@ -3,9 +3,9 @@
 	"build": {
 		"context": "..",
 		"dockerfile": "../Dockerfile",
-		"args": {
-			"JAX_PLUGIN": "metal"
-		}
+		// "args": {
+		// 	"JAX_PLUGIN": "metal"
+		// }
 	},
 
 	"mounts": [

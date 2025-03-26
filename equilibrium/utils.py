@@ -84,6 +84,7 @@ def save_model(model, ckpt_dir: str):
     checkpointer = ocp.StandardCheckpointer()
     ckpt_path = os.path.abspath(os.path.join(ckpt_dir))
     checkpointer.save(ckpt_path, state)
+    checkpointer.wait_until_finished()
 
 
 cpu_device = jax.devices("cpu")[0]

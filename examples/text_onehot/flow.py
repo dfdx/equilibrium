@@ -13,7 +13,7 @@ from tqdm import tqdm
 from equilibrium.flow.generation import generate
 from equilibrium.flow.path.affine import CondOTProbPath
 from equilibrium.flow.path.path import ProbPath
-from equilibrium.utils import load_model, plot_samples, save_model
+from equilibrium.oldutils import load_model, plot_samples, save_model
 from examples.text_onehot.encoder import OneHotEncoder, build_char_vocab
 from examples.text_onehot.model import Transformer, ModelArgs
 

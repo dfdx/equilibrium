@@ -10,7 +10,7 @@ from equilibrium.flow.generation import generate
 from equilibrium.flow.path.affine import CondOTProbPath
 from equilibrium.flow.path.path import ProbPath
 from equilibrium.models.unet import UNetModel
-from equilibrium.utils import load_model, plot_samples, save_model
+from equilibrium.oldutils import load_model, plot_samples, save_model
 
 MODEL_PATH = "output/ckpt"
 N_EPOCHS = 10

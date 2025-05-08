@@ -29,8 +29,8 @@ N_EPOCHS = 20
 summary_writer = tf.summary.create_file_writer(TENSORBOARD_PATH)
 
 
-def loss_fn(model, batch: dict):
-    emb = batch["emb"]
+def loss_fn(model, encoder, batch: dict):
+    cond = batch["cond"]
     inputs = emb[:, :-1, :]
     labels = emb[:, 1:].argmax(axis=-1)
     mask = batch["pad_mask"][:, 1:]
@@ -53,8 +53,8 @@ TOTAL_STEPS = 10_000
 BATCH_SIZE = 8
 
 
-def train(model, encoder: OneHotEncoder, ds: Dataset):
-    optimizer = nnx.Optimizer(model, optax.adamw(1e-3))
+def train(model, encoder, ds: Dataset):
+    optimizer = nnx.Optimizer(model, optax.sgd(1e-3))
     metrics = nnx.MultiMetric(
         loss=nnx.metrics.Average("loss"),
     )
@@ -114,7 +114,8 @@ def main():
         cond = encoder(cond_tokens)[:, 0, :]
 
         tokens = jnp.array([enc.ids for enc in enc_tokenizer.encode_batch(["<start>"])])
-        model(tokens, start_pos=0, cond=cond)
+        out = model(tokens, start_pos=0, cond=cond)
+
 
     train(model, encoder, ds)
 

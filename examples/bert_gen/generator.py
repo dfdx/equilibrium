@@ -5,6 +5,7 @@ from typing import Optional
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import nnx
 from flax.nnx.graph import Static
 
@@ -76,7 +77,7 @@ class Attention(nnx.Module):
     ):
         self.args = args
         self.sincos = sincos
-        self.full_causal_mask = full_causal_mask
+        # self.full_causal_mask = full_causal_mask
         self.n_heads = args.n_heads
         self.n_kv_heads = self.n_heads if args.n_kv_heads is None else args.n_kv_heads
 
@@ -137,8 +138,9 @@ class Attention(nnx.Module):
 
         # apply masks. note: masks have shape (bsz, q_len, kv_len)
         # kv_len depends on the use of cache - see its definition above
+        full_causal_mask = nnx.make_causal_mask(jnp.ones(self.args.max_seq_len, dtype="bool"), dtype="bool")
         mask = jax.lax.dynamic_slice(
-            self.full_causal_mask.value, (0, start_pos, 0), (1, q_len, kv_len)
+            full_causal_mask, (0, start_pos, 0), (1, q_len, kv_len)
         )
         mask = jnp.broadcast_to(mask, (bsz, *mask.shape[1:]))
         if padding_mask is not None:
@@ -383,3 +385,11 @@ def init_from(model_id: str, rngs: nnx.Rngs = nnx.Rngs(54), **kw):
     full_kw = llm.model.args.__dict__ | kw
     model = partial_init(state, ModelArgs(**full_kw), rngs)
     return llm.tokenizer, model
+
+
+
+def main():
+    kw = {
+        "max_seq_len": 512, "max_batch_size": 1, "dtype": jnp.bfloat16, "param_dtype": jnp.bfloat16, "vocab_size": 32064, # "cond_dim": 768,
+    }
+    tokenizer, model = init_from("microsoft/Phi-3.5-mini-instruct", **kw)

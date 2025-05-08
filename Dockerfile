@@ -1,11 +1,9 @@
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build-base
+# FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build-base
+FROM ubuntu:24.04 AS build-base
 
-
-ARG JAX_PLUGIN=cuda
 
 ## Basic system setup
 
-ENV user=devpod
 SHELL ["/bin/bash", "-c"]
 
 
@@ -20,7 +18,7 @@ ENV LANGUAGE=en_US.UTF-8 \
     LC_CTYPE=en_US.UTF-8 \
     LC_MESSAGES=en_US.UTF-8
 
-RUN apt update && apt install -y --no-install-recommends \
+RUN apt-get update && apt install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         curl \
@@ -51,48 +49,66 @@ RUN apt update && apt install -y --no-install-recommends \
     && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
     && apt clean
 
-
 ## System packages
 
-RUN apt-get update
-RUN apt-get install -y git openssh-server
-RUN apt-get install -y python3 python3-pip python-is-python3
+ENV PYTHONFAULTHANDLER=1 \
+    PYTHONHASHSEED=random \
+    PYTHONUNBUFFERED=1
 
+RUN apt-get update && apt-get install -y \
+    git \
+    openssh-server \
+    python-is-python3 \
+    python3 \
+    python3-pip \
+    && apt-get clean \
+    && pip install uv --break-system-packages
 
 ## Add user & enable sudo
 
-RUN useradd -ms /bin/bash ${user}
-RUN usermod -aG sudo ${user}
+ENV user=devpod
 
-RUN apt-get install -y sudo
-RUN echo "${user} ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+RUN useradd -ms /bin/bash ${user} \
+    && usermod -aG sudo ${user} \
+    && apt-get install -y sudo \
+    && apt-get clean \
+    && echo "${user} ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
+    && echo 'export PATH=${PATH}:~/.local/bin' >> /home/${user}/.bashrc
 
 USER ${user}
 WORKDIR /home/${user}
 
-
 ## Python packages
 
-RUN pip install --upgrade pip
-RUN pip install wheel
+# avoid uv warning related to Windows/Linux compatibility issues
+ENV UV_LINK_MODE=copy
+
+# create globally visible venv
+# also set $VIRTUAL_ENV which will be used by uv
+ENV VIRTUAL_ENV=/venv
+RUN sudo mkdir "$VIRTUAL_ENV" \
+    && sudo chown -R ${user}:${user} "$VIRTUAL_ENV"
+
+# install the project
+ENV BUILD_DIR=/app
+COPY --chown=${user}:${user} . "$BUILD_DIR"
 
 
-# add specific version of JAX directry to the container
-RUN pip install jax["${JAX_PLUGIN}"]==0.5.0
+WORKDIR "${BUILD_DIR}"
+RUN uv lock && uv sync --active
+WORKDIR /home/${user}
 
-COPY --chown=${user}:${user} ./pyproject.toml /home/${user}/
-RUN pip install pip-tools
-RUN python -m piptools compile --extra dev -o requirements.txt pyproject.toml
-RUN pip install -r requirements.txt
-
-
-## Dev tools (should not be in pyproject.toml)
-
-RUN pip install ipython seaborn datasets
+# Install specific variation of JAX, but don't add to prooject dependencies
+RUN uv pip install jax[cuda]==0.6.0
 
 
-RUN echo 'export HOME=/home/'$user >> /home/$user/.bashrc
-RUN echo 'export PATH=/home/'$user'/.local/bin:${PATH}' >> /home/$user/.bashrc
+###########################################################
+FROM build-base AS build-dev
+
+## Other tools
+
+# create a shortcut for uv run --active
+RUN echo 'alias uvrun="uv run --active"' >> /home/${user}/.bashrc
 
 
-CMD ["echo", "Balance is the key"]
+CMD ["echo", "Keep the balance!"]

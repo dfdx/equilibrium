@@ -7,7 +7,7 @@ def summary_size(obj):
         obj = nnx.split(obj)[1]
     elif isinstance(obj, nnx.graph.Static):
         obj = obj.value
-    return sum(x.nbytes for x in jax.tree_leaves(obj))
+    return sum(x.nbytes for x in jax.tree.leaves(obj))
 
 
 def summary_size_str(obj):

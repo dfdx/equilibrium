@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "equilibrium"
+version = "0.1.0"
+description = "Research-friendly diffusion models in JAX"
+authors = [
+  { name="Andrei Zhabinski", email="andrei.zhabinski@gmail.com" },
+]
+readme = "README.md"
+requires-python = ">=3.10.0"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "flax>=0.8.4",
+    "optax>=0.2.2",
+    "orbax>=0.1.9",
+    "tokenizers>=0.19.1",
+    "safetensors>=0.4.3",
+    "huggingface-hub>=0.23.1",
+]
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "ipython>=8.36.0",
+    "isort>=6.0.1",
+    "mypy>=1.15.0",
+    "pytest>=8.3.5",
+]
+
+
+[project.urls]
+Homepage = "https://github.com/dfdx/equilibrium"
+
+
+
+
+# [tool.mypy]
+#
+# [[tool.mypy.overrides]]
+# module = "tokenizers.*,huggingface_hub.*,transformers.*"
+# ignore_missing_imports = true
+

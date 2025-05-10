@@ -7,7 +7,7 @@
 	},
 
 	"mounts": [
-		"source=${localEnv:HOME}/.ssh/,target=/home/devpod/.ssh,type=bind,consistency=cached",
+		// "source=${localEnv:HOME}/.ssh/,target=/home/devpod/.ssh,type=bind,consistency=cached",
 		"source=${localEnv:HOME}/.cache/huggingface/,target=/home/devpod/.cache/huggingface/,type=bind,consistency=cached",
 		"source=${localEnv:HOME}/.vscode-server,target=/home/devpod/.vscode-server,type=bind,consistency=cached",
 		"source=${localEnv:HOME}/data/,target=/data/,type=bind,consistency=cached"
@@ -17,7 +17,7 @@
 		"HF_TOKEN": "${localEnv:HF_TOKEN_PERSONAL}",
 		"PYTHONPATH": "${PYTHONPATH}:fabrique",
 		"JAX_COMPILATION_CACHE_DIR": "/tmp/jax_cache",
-		"XLA_PYTHON_CLIENT_MEM_FRACTION": ".5"
+		"XLA_PYTHON_CLIENT_MEM_FRACTION": ".99"
 	},
 
 	"runArgs": ["--gpus", "all"]

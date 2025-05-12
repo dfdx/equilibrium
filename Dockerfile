@@ -107,8 +107,15 @@ FROM build-base AS build-dev
 
 ## Other tools
 
-# create a shortcut for uv run --active
-RUN echo 'alias uvrun="uv run --active"' >> /home/${user}/.bashrc
+# WORKDIR "${BUILD_DIR}"
+
+# RUN wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+# RUN sudo apt install ./google-chrome-stable_current_amd64.deb
+RUN sudo /venv/bin/playwright install-deps
+RUN /venv/bin/playwright install chromium
+
+# RUN uv pip install jax[cuda]==0.6.0   # uv sync removes CUDA deps, so we have to re-install
+# WORKDIR /home/${user}
 
 
 CMD ["echo", "Keep the balance!"]

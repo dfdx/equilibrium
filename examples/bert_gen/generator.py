@@ -5,9 +5,11 @@ from typing import Optional
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import nnx
 from flax.nnx.graph import Static
 
+from fabrique import LLM
 from fabrique.models.common.cache import KVCache, concatenate_to_cache
 from fabrique.models.common.embeddings import (
     apply_rotary_pos_emb,
@@ -16,18 +18,18 @@ from fabrique.models.common.embeddings import (
 from fabrique.models.common.norm import RMSNorm
 from fabrique.models.common.utils import padding_to_attention_mask
 from fabrique.utils import check_and_update_fields
-from equilibrium.models.embeddings import timestep_embedding
 
 
-@dataclass
+@dataclass(frozen=True)
 class ModelArgs:
     dim: int = 4096
+    cond_dim: int = 768
     n_layers: int = 32
     n_heads: int = 32
     n_kv_heads: Optional[int] = None
     vocab_size: int = -1  # defined later by tokenizer
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
-    ffn_hidden_size: int = 14336
+    ffn_hidden_size: int = 8192
     ffn_dim_multiplier: Optional[float] = None
     norm_eps: float = 1e-5
     max_batch_size: int = 32
@@ -75,14 +77,11 @@ class Attention(nnx.Module):
     ):
         self.args = args
         self.sincos = sincos
-        self.full_causal_mask = full_causal_mask
+        # self.full_causal_mask = full_causal_mask
         self.n_heads = args.n_heads
         self.n_kv_heads = self.n_heads if args.n_kv_heads is None else args.n_kv_heads
 
         self.n_rep = self.n_heads // self.n_kv_heads
-        assert (
-            self.args.dim % self.n_heads == 0
-        ), f"Embedding size ({self.args.dim}) is not a multiplier of number of heads ({self.n_heads})"
         self.head_dim = self.args.dim // self.n_heads
 
         dense = partial(
@@ -93,9 +92,8 @@ class Attention(nnx.Module):
             kernel_init=jax.nn.initializers.normal(0.02),  # 0.02 - initializer range,
             rngs=rngs,
         )
-        self.wq = dense(args.dim, self.n_heads * self.head_dim)
-        self.wk = dense(args.dim, self.n_kv_heads * self.head_dim)
-        self.wv = dense(args.dim, self.n_kv_heads * self.head_dim)
+        op_size = self.n_heads * self.head_dim + 2 * (self.n_kv_heads * self.head_dim)
+        self.wqkv = dense(args.dim, op_size)
         self.wo = dense(self.n_heads * self.head_dim, self.args.dim)
         # if use_cache == False, we still create the variable to keep the same structure
         # but set its length to zero
@@ -107,7 +105,8 @@ class Attention(nnx.Module):
     def __call__(
         self,
         x: jax.Array,
-        padding_mask: jax.Array
+        start_pos: int,
+        padding_mask: jax.Array | None = None,
     ):
         """
         Forward pass of the attention module.
@@ -121,12 +120,15 @@ class Attention(nnx.Module):
         Returns:
             jax.Array: Output array after attention.
         """
-        start_pos = 0
         bsz, seq_len, _ = x.shape
         q_len = seq_len
-        kv_len = seq_len
+        kv_len = self.args.max_seq_len if self.args.use_cache else q_len
 
-        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+        qkv = self.wqkv(x)
+        query_pos = self.n_heads * self.head_dim
+        xq = qkv[..., :query_pos]
+        xk = qkv[..., query_pos : query_pos + self.n_kv_heads * self.head_dim]
+        xv = qkv[..., query_pos + self.n_kv_heads * self.head_dim :]
 
         xq = xq.reshape(bsz, seq_len, self.n_heads, self.head_dim)
         xk = xk.reshape(bsz, seq_len, self.n_kv_heads, self.head_dim)
@@ -134,17 +136,23 @@ class Attention(nnx.Module):
 
         xq, xk = apply_rotary_pos_emb(xq, xk, self.sincos.value, start_pos)
 
+        # apply masks. note: masks have shape (bsz, q_len, kv_len)
+        # kv_len depends on the use of cache - see its definition above
+        full_causal_mask = nnx.make_causal_mask(jnp.ones(self.args.max_seq_len, dtype="bool"), dtype="bool")
+        mask = jax.lax.dynamic_slice(
+            full_causal_mask, (0, start_pos, 0), (1, q_len, kv_len)
+        )
+        mask = jnp.broadcast_to(mask, (bsz, *mask.shape[1:]))
+        if padding_mask is not None:
+            pad_attn_mask = padding_to_attention_mask(padding_mask, shape=mask.shape)
+            mask = nnx.combine_masks(mask, pad_attn_mask).astype(bool)  # type: ignore
 
-        # mask = jax.lax.dynamic_slice(
-        #     self.full_causal_mask.value, (0, start_pos, 0), (1, q_len, kv_len)
-        # )
-        # mask = jnp.broadcast_to(mask, (bsz, *mask.shape[1:]))
-        # if padding_mask is not None:
-        #     pad_attn_mask = padding_to_attention_mask(padding_mask, shape=mask.shape)
-        #     mask = nnx.combine_masks(mask, pad_attn_mask).astype(bool)  # type: ignore
-
-        # using only padding mask
-        mask = padding_to_attention_mask(padding_mask) # , shape=mask.shape)
+        if self.args.use_cache:
+            # shape of kv after concatenating to the cache is
+            # [bs, max_seq_len, n_heads, head_dim]
+            xk, xv, mask = concatenate_to_cache(
+                self.cache_k, self.cache_v, xk, xv, xq, mask, start_pos
+            )
 
         output = jax.nn.dot_product_attention(xq, xk, xv, mask=mask[:, None, :, :])
         output = output.reshape(output.shape[:2] + (self.args.dim,))
@@ -198,12 +206,13 @@ class FeedForward(nnx.Module):
             dtype=self.dtype,
             rngs=rngs,
         )
-        self.w1 = linear(dim, hidden_dim)
-        self.w2 = linear(hidden_dim, dim)
-        self.w3 = linear(dim, hidden_dim)
+        self.w1 = linear(dim, 2 * hidden_dim)  # gate + up projection
+        self.w2 = linear(hidden_dim, dim)  # down projection
 
     def __call__(self, x):
-        return self.w2(nnx.silu(self.w1(x)) * self.w3(x))
+        gate_up = self.w1(x)
+        gate, up = jnp.split(gate_up, 2, axis=-1)
+        return self.w2(up * nnx.silu(gate))
 
 
 class TransformerBlock(nnx.Module):
@@ -216,6 +225,8 @@ class TransformerBlock(nnx.Module):
 
         Args:
             args (ModelArgs): Model configuration parameters.
+            sincos (jax.Array): Precomputed frequency array.
+            full_causal_mask (jax.Array): Causal mask of size (1, max_seq_len, max_seq_len).
             rngs (nnx.Rngs): Random number generator.
         """
         self.args = args
@@ -239,7 +250,12 @@ class TransformerBlock(nnx.Module):
             args.dim, eps=args.norm_eps, param_dtype=args.param_dtype
         )
 
-    def __call__(self, x: jax.Array, padding_mask: jax.Array):
+    def __call__(
+        self,
+        x: jax.Array,
+        start_pos: int,
+        padding_mask: jax.Array | None = None,
+    ):
         """
         Perform a forward pass through the TransformerBlock.
 
@@ -251,7 +267,11 @@ class TransformerBlock(nnx.Module):
             jax.Array: Output tensor after applying attention and feedforward layers.
 
         """
-        h = x + self.attention(self.attention_norm(x), padding_mask)
+        h = x + self.attention(
+            self.attention_norm(x),
+            start_pos,
+            padding_mask=padding_mask,
+        )
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
@@ -280,21 +300,20 @@ class Transformer(nnx.Module):
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers
 
-        # self.tok_embeddings = nnx.Embed(
-        #     num_embeddings=args.vocab_size,
-        #     features=args.dim,
-        #     dtype=args.dtype,
-        #     param_dtype=args.param_dtype,
-        #     rngs=rngs,
-        # )
-
+        self.tok_embeddings = nnx.Embed(
+            num_embeddings=args.vocab_size,
+            features=args.dim,
+            dtype=args.dtype,
+            param_dtype=args.param_dtype,
+            rngs=rngs,
+        )
+        self.cond_emb = nnx.Linear(self.args.cond_dim, self.args.dim, rngs=rngs)
         sincos = Static(
             create_sinusoidal_positions(args.max_seq_len, args.dim // args.n_heads)
         )
         full_causal_mask = Static(
             nnx.make_causal_mask(jnp.ones(args.max_seq_len, dtype="bool"), dtype="bool")
         )
-
         self.layers = [
             TransformerBlock(args, sincos, full_causal_mask, rngs=rngs)
             for _ in range(args.n_layers)
@@ -303,12 +322,74 @@ class Transformer(nnx.Module):
         self.norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.output = nnx.Linear(args.dim, args.vocab_size, use_bias=False, rngs=rngs)
 
-    def __call__(self, x: jax.Array, padding_mask: jax.Array, t: jax.Array | None = None):
-        h = x
-        if t is not None:
-            t_emb = timestep_embedding(t, x.shape[-1])[:, None, :]
-            h += t_emb
+
+    # def __init__(self, plain: PhiTransformer, cond_dim: int):
+    #     self.args = plain.args
+    #     self.vocab_size = plain.vocab_size
+    #     self.n_layers = plain.n_layers
+    #     self.tok_embeddings = plain.tok_embeddings
+    #     self.cond_emb = nnx.Linear(cond_dim, self.args.dim)
+    #     self.layers = plain.layers
+    #     self.norm = plain.norm
+    #     self.output = plain.output
+
+    def __call__(
+        self,
+        tokens: jax.Array,
+        start_pos: int,
+        padding_mask: jax.Array | None = None,
+        cond: jax.Array | None = None
+    ):
+        """
+        Perform a forward pass through the Transformer model.
+
+        Args:
+            tokens (jax.Array): Input token indices.
+            start_pos (int): Starting position for attention caching.
+            padding_mask (jax.Array | None): Padding mask of size (bsz, kv_len), dtype = bool.
+            cond (jax.Array | None): Conditioning.
+
+        Returns:
+            jax.Array: Output logits after applying the Transformer model.
+        """
+        h = self.tok_embeddings(tokens)
+        if cond is not None:
+            h += self.cond_emb(cond)[:, None, :]
         for i, layer in enumerate(self.layers):
-            h = layer(h, padding_mask)
+            h = layer(
+                h,
+                start_pos,
+                padding_mask=padding_mask,
+            )
         h = self.norm(h)
-        return h
+        output = self.output(h).astype("float32")
+        return output
+
+
+
+@nnx.jit(donate_argnums=(0,), static_argnums=(1,))
+def partial_init(old_state, args: ModelArgs, rngs: nnx.Rngs):
+    # kw = {
+    #     "max_seq_len": 512, "max_batch_size": 1, "dtype": jnp.bfloat16, "param_dtype": jnp.bfloat16, "vocab_size": 32064, # "cond_dim": 768,
+    # }
+    # args = ModelArgs(**kw)
+    model = Transformer(args, rngs=rngs)
+    nnx.update(model, old_state)
+    return model
+
+
+def init_from(model_id: str, rngs: nnx.Rngs = nnx.Rngs(54), **kw):
+    llm = LLM.from_pretrained(model_id, **kw)
+    _, state = nnx.split(llm.model)
+    # take kw from existing LLM except for the ones that have passed explicitely
+    full_kw = llm.model.args.__dict__ | kw
+    model = partial_init(state, ModelArgs(**full_kw), rngs)
+    return llm.tokenizer, model
+
+
+
+def main():
+    kw = {
+        "max_seq_len": 512, "max_batch_size": 1, "dtype": jnp.bfloat16, "param_dtype": jnp.bfloat16, "vocab_size": 32064, # "cond_dim": 768,
+    }
+    tokenizer, model = init_from("microsoft/Phi-3.5-mini-instruct", **kw)

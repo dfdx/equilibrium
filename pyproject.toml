@@ -1,24 +1,11 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "equilibrium"
 version = "0.1.0"
-description = "Research-friendly diffusion models in JAX"
-authors = [
-  { name="Andrei Zhabinski", email="andrei.zhabinski@gmail.com" },
-]
+description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10.0"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: Apache Software License",
-    "Operating System :: OS Independent",
-]
-
+requires-python = ">=3.12"
 dependencies = [
-    "flax>=0.8.4",
+    "flax>=0.10.6",
     "optax>=0.2.2",
     "orbax>=0.1.9",
     "tokenizers>=0.19.1",
@@ -26,26 +13,22 @@ dependencies = [
     "huggingface-hub>=0.23.1",
 ]
 
-[project.urls]
-Homepage = "https://github.com/dfdx/equilibrium"
-
-
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
-    "pytest",
-    "ipython",
-    "mypy>=1.9.0",
-    "mypy-extensions>=1.0.0",
-    "black",
-    "isort",
+    "black>=25.1.0",
+    "ipython>=9.2.0",
+    "isort>=6.0.1",
+    "mypy>=1.15.0",
+]
+extra = [
+    "httpx>=0.28.1",
+    "pandas>=2.2.3",
+    "pillow>=11.2.1",
+    "playwright>=1.52.0",
+    "pyarrow>=20.0.0",
+    # "webdriver-manager>=4.0.2",
 ]
 
-[tool.setuptools.packages]
-find = {}
 
-
-[tool.mypy]
-
-[[tool.mypy.overrides]]
-module = "tokenizers.*,huggingface_hub.*,transformers.*"
-ignore_missing_imports = true
+[tool.uv]
+default-groups = ["dev", "extra"]

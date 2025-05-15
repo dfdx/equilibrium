@@ -8,7 +8,10 @@
 import time
 import pandas as pd
 import httpx
+import math
+import asyncio
 
+from tqdm import tqdm
 from playwright.async_api import async_playwright
 
 
@@ -48,11 +51,16 @@ def ignore_namespace(xpath: str):
 
 async def test():
     async with async_playwright() as p:
-        # browser = await p.chromium.launch(headless=True)
-        browser = await p.firefox.launch(headless=True)
+        browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
         print("opening file")
         await page.goto('file://' + filepath, wait_until="load")
+        await page.screenshot(
+            clip={"x": 0, "y": 10_000, "height": 1000, "width": 1000},
+            path="output/segment.png"
+        )
+
+
         element = await page.query_selector("xpath=" + xpath)
         # await element.is_visible()
         await element.scroll_into_view_if_needed()
@@ -83,6 +91,32 @@ async def xpath_screenshot(filepath: str, xpath: str):
         await browser.close()
 
 
+
+async def capture_views(url, output_prefix="output/screenshots", viewport_width=1280, viewport_height=1280):
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        context = await browser.new_context(
+            viewport={"width": viewport_width, "height": viewport_height}
+        )
+        page = await context.new_page()
+        await page.goto(url)
+
+        # Get full page height
+        page_height = await page.evaluate("() => document.body.scrollHeight")
+        num_views = math.ceil(page_height / viewport_height)
+
+        for i in tqdm(range(num_views)):
+            scroll_position = i * viewport_height
+            await page.evaluate(f"() => window.scrollTo(0, {scroll_position})")
+            await asyncio.sleep(0.2)  # Allow scroll to settle/render
+
+            # note: we can't create coroutines here and use gather at the end
+            # because .screenshot() captures CURRENT view, which should NOT be moved
+            # before screenshot is done
+            await page.screenshot(path=f"{output_prefix}/{i+1}.png")
+        browser.close()
+
+
 # def extract2():
 #     filepath = '/data/fss/reports/_WOCMU6HCI0OJWNPRZS33_2024-12-31_ESEF_IT_0_WOCMU6HCI0OJWNPRZS33-2024-12-31-0-en_reports_WOCMU6HCI0OJWNPRZS33-2024-12-31-0-en.xhtml'
 #     # xpath = '/html[1]/body[1]/div[400]'
@@ -106,30 +140,3 @@ async def xpath_screenshot(filepath: str, xpath: str):
 #         element.screenshot(path='output/element_screenshot.png', timeout=600_000)
 #         print("closing")
 #         browser.close()
-
-
-
-def gemma_test():
-    # https://flax.readthedocs.io/en/latest/guides/gemma.html
-    from gemma import gm
-
-    # Model and parameters
-    model = gm.nn.Gemma3_4B()
-    params = gm.ckpts.load_params(gm.ckpts.CheckpointPath.GEMMA3_4B_IT)
-
-    # Example of multi-turn conversation
-    sampler = gm.text.ChatSampler(
-        model=model,
-        params=params,
-        multi_turn=True,
-    )
-
-    prompt = """Which of the two images do you prefer?
-
-    Image 1: <start_of_image>
-    Image 2: <start_of_image>
-
-    Write your answer as a poem."""
-    out0 = sampler.chat(prompt, images=[image1, image2])
-
-    out1 = sampler.chat('What about the other image ?')

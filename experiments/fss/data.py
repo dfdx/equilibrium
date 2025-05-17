@@ -24,6 +24,18 @@ DATA_DIR = "/data/fss"
 IFRS_REF = f"{DATA_DIR}/ifrs-full.tsv"
 
 
+def url_to_dirname(url: str):
+    path = urllib.parse.urlparse(url).path
+    dirname = path.lstrip("/").replace("/", "__")
+    dirname = os.path.splitext(dirname)[0]
+    return dirname
+
+
+def dirname_to_urlpath(dirname: str):
+    urlpath = "/" + dirname.replace("__", "/") + ".xhtml"
+    return urlpath
+
+
 def ifrs_concept_labels():
     ifrs = pd.read_csv(IFRS_REF, sep="\t")
     ifrs = ifrs[~pd.isna(ifrs.NAME)]

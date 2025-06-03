@@ -1,5 +1,4 @@
-# FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build-base
-FROM ubuntu:24.04 AS build-base
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04 AS build-base
 
 
 ## Basic system setup
@@ -80,17 +79,14 @@ WORKDIR /home/${user}
 
 ## Python packages
 
-# avoid uv warning related to Windows/Linux compatibility issues
-ENV UV_LINK_MODE=copy
-
 # create globally visible venv
 # also set $VIRTUAL_ENV which will be used by uv
 ENV VIRTUAL_ENV=/venv
-RUN sudo mkdir "$VIRTUAL_ENV" \
+RUN sudo uv venv "$VIRTUAL_ENV" \
     && sudo chown -R ${user}:${user} "$VIRTUAL_ENV"
 
 # install the project
-ENV BUILD_DIR=/app
+ENV BUILD_DIR=/opt/app
 COPY --chown=${user}:${user} . "$BUILD_DIR"
 
 
@@ -107,15 +103,6 @@ FROM build-base AS build-dev
 
 ## Other tools
 
-# WORKDIR "${BUILD_DIR}"
-
-# RUN wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-# RUN sudo apt install ./google-chrome-stable_current_amd64.deb
-RUN sudo /venv/bin/playwright install-deps
-RUN /venv/bin/playwright install chromium
-
-# RUN uv pip install jax[cuda]==0.6.0   # uv sync removes CUDA deps, so we have to re-install
-# WORKDIR /home/${user}
 
 
 CMD ["echo", "Keep the balance!"]

@@ -1,6 +1,6 @@
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
 
 
 def pairwise_euclidean(x, y):

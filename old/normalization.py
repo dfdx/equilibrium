@@ -8,7 +8,8 @@ from flax import nnx
 from flax.nnx.nnx import rnglib
 from flax.nnx.nnx.module import Module
 from flax.nnx.nnx.nn import initializers
-from flax.nnx.nnx.nn.normalization import _canonicalize_axes, _compute_stats, _normalize
+from flax.nnx.nnx.nn.normalization import (_canonicalize_axes, _compute_stats,
+                                           _normalize)
 from flax.typing import Axes, Dtype, Initializer
 
 

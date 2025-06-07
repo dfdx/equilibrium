@@ -1,13 +1,14 @@
 import traceback
+from datetime import datetime
+
 import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
 import tensorflow as tf
-from datetime import datetime
-from matplotlib import pyplot as plt
 from datasets import load_dataset
+from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 from equilibrium.flow.generation import generate
@@ -15,8 +16,7 @@ from equilibrium.flow.path.affine import CondOTProbPath
 from equilibrium.flow.path.path import ProbPath
 from equilibrium.oldutils import load_model, plot_samples, save_model
 from examples.text_onehot.encoder import OneHotEncoder, build_char_vocab
-from examples.text_onehot.model import Transformer, ModelArgs
-
+from examples.text_onehot.model import ModelArgs, Transformer
 
 RUN_TAG = datetime.now().strftime('%Y-%m-%d_%H-%M')
 TENSORBOARD_PATH = f"/tmp/tensorboard/{RUN_TAG}"

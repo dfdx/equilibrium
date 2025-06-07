@@ -1,7 +1,8 @@
 import jax
 import jax.numpy as jnp
 from fabrique.loading import from_pretrained
-from fabrique.models.bert.modeling import Embeddings, ModelArgs, TransformerBlock
+from fabrique.models.bert.modeling import (Embeddings, ModelArgs,
+                                           TransformerBlock)
 from flax import nnx
 
 from equilibrium.models.embeddings import timestep_embedding

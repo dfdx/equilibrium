@@ -1,12 +1,12 @@
 
-import jax
 import flax.nnx as nnx
+import jax
 import optax
 import tensorflow as tf
-from datasets import load_dataset, Dataset
-from examples.text_onehot.model import ModelArgs, Transformer
-from examples.text_onehot.encoder import OneHotEncoder, build_char_vocab
+from datasets import Dataset, load_dataset
 
+from examples.text_onehot.encoder import OneHotEncoder, build_char_vocab
+from examples.text_onehot.model import ModelArgs, Transformer
 
 summary_writer = tf.summary.create_file_writer("/tmp/tensorboard")
 

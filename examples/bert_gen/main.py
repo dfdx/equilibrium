@@ -1,24 +1,21 @@
 
+from datetime import datetime
+
+import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import flax.nnx as nnx
 import optax
 import tensorflow as tf
-from datetime import datetime
-from datasets import load_dataset, Dataset
+from datasets import Dataset, load_dataset
 from fabrique import LLM
 from fabrique.loading import from_pretrained
-from fabrique.models.bert.modeling import (
-    ModelArgs as EncoderModelArgs,
-    Transformer as Encoder
-)
-from examples.bert_gen.generator import (
-    ModelArgs as GenModelArgs,
-    Transformer as Generator,
-    init_from
-)
-from examples.text_onehot.encoder import OneHotEncoder, build_char_vocab
+from fabrique.models.bert.modeling import ModelArgs as EncoderModelArgs
+from fabrique.models.bert.modeling import Transformer as Encoder
 
+from examples.bert_gen.generator import ModelArgs as GenModelArgs
+from examples.bert_gen.generator import Transformer as Generator
+from examples.bert_gen.generator import init_from
+from examples.text_onehot.encoder import OneHotEncoder, build_char_vocab
 
 RUN_TAG = datetime.now().strftime('%Y-%m-%d_%H-%M')
 TENSORBOARD_PATH = f"/tmp/tensorboard/{RUN_TAG}"

@@ -1,10 +1,10 @@
 import math
+from collections import Counter
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 from tqdm import tqdm
-from collections import Counter
-
 
 UNK_TOKEN = "<unk>"
 PAD_TOKEN = "<pad>"

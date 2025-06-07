@@ -5,17 +5,15 @@ from typing import Optional
 
 import jax
 import jax.numpy as jnp
-from flax import nnx
-from flax.nnx.graph import Static
-
 from fabrique.models.common.cache import KVCache, concatenate_to_cache
-from fabrique.models.common.embeddings import (
-    apply_rotary_pos_emb,
-    create_sinusoidal_positions,
-)
+from fabrique.models.common.embeddings import (apply_rotary_pos_emb,
+                                               create_sinusoidal_positions)
 from fabrique.models.common.norm import RMSNorm
 from fabrique.models.common.utils import padding_to_attention_mask
 from fabrique.utils import check_and_update_fields
+from flax import nnx
+from flax.nnx.graph import Static
+
 from equilibrium.models.embeddings import timestep_embedding
 
 

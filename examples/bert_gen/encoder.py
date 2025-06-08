@@ -13,13 +13,13 @@ PAD_TOKEN = "<pad>"
 def closest_power_of_2(n: int, lower=True):
     log_n = math.log(n, 2)
     pow = math.floor(log_n) if lower else math.ceil(log_n)
-    return 2**(pow)
+    return 2 ** (pow)
 
 
 def build_char_vocab(texts):
     chars = Counter()
     for quote in tqdm(texts):
-        text = quote.strip().strip('”“')
+        text = quote.strip().strip("”“")
         chars.update(text)
     target_vocab_size = closest_power_of_2(len(chars))
     char_list = [ch for ch, _ in chars.most_common(target_vocab_size - 2)]
@@ -32,7 +32,13 @@ def build_char_vocab(texts):
 
 class OneHotEncoder:
 
-    def __init__(self, vocab: dict, unk_token=UNK_TOKEN, pad_token=PAD_TOKEN, max_length: int = 512):
+    def __init__(
+        self,
+        vocab: dict,
+        unk_token=UNK_TOKEN,
+        pad_token=PAD_TOKEN,
+        max_length: int = 512,
+    ):
         self.token2id = vocab
         self.id2token = {id: token for token, id in vocab.items()}
         self.unk_id = self.token2id[unk_token]
@@ -62,7 +68,9 @@ class OneHotEncoder:
         ids = emb.argmax(axis=-1)
         texts = []
         for tids in ids:
-            chars = [self.id2token[tid.item()] for tid in tids if tid.item() != self.pad_id]
+            chars = [
+                self.id2token[tid.item()] for tid in tids if tid.item() != self.pad_id
+            ]
             text = "".join(chars)
             texts.append(text)
         return texts

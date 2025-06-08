@@ -8,8 +8,10 @@ import jax.numpy as jnp
 import numpy as np
 from fabrique import LLM
 from fabrique.models.common.cache import KVCache, concatenate_to_cache
-from fabrique.models.common.embeddings import (apply_rotary_pos_emb,
-                                               create_sinusoidal_positions)
+from fabrique.models.common.embeddings import (
+    apply_rotary_pos_emb,
+    create_sinusoidal_positions,
+)
 from fabrique.models.common.norm import RMSNorm
 from fabrique.models.common.utils import padding_to_attention_mask
 from fabrique.utils import check_and_update_fields
@@ -135,7 +137,9 @@ class Attention(nnx.Module):
 
         # apply masks. note: masks have shape (bsz, q_len, kv_len)
         # kv_len depends on the use of cache - see its definition above
-        full_causal_mask = nnx.make_causal_mask(jnp.ones(self.args.max_seq_len, dtype="bool"), dtype="bool")
+        full_causal_mask = nnx.make_causal_mask(
+            jnp.ones(self.args.max_seq_len, dtype="bool"), dtype="bool"
+        )
         mask = jax.lax.dynamic_slice(
             full_causal_mask, (0, start_pos, 0), (1, q_len, kv_len)
         )
@@ -319,7 +323,6 @@ class Transformer(nnx.Module):
         self.norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.output = nnx.Linear(args.dim, args.vocab_size, use_bias=False, rngs=rngs)
 
-
     # def __init__(self, plain: PhiTransformer, cond_dim: int):
     #     self.args = plain.args
     #     self.vocab_size = plain.vocab_size
@@ -335,7 +338,7 @@ class Transformer(nnx.Module):
         tokens: jax.Array,
         start_pos: int,
         padding_mask: jax.Array | None = None,
-        cond: jax.Array | None = None
+        cond: jax.Array | None = None,
     ):
         """
         Perform a forward pass through the Transformer model.
@@ -363,7 +366,6 @@ class Transformer(nnx.Module):
         return output
 
 
-
 @nnx.jit(donate_argnums=(0,), static_argnums=(1,))
 def partial_init(old_state, args: ModelArgs, rngs: nnx.Rngs):
     # kw = {
@@ -384,9 +386,12 @@ def init_from(model_id: str, rngs: nnx.Rngs = nnx.Rngs(54), **kw):
     return llm.tokenizer, model
 
 
-
 def main():
     kw = {
-        "max_seq_len": 512, "max_batch_size": 1, "dtype": jnp.bfloat16, "param_dtype": jnp.bfloat16, "vocab_size": 32064, # "cond_dim": 768,
+        "max_seq_len": 512,
+        "max_batch_size": 1,
+        "dtype": jnp.bfloat16,
+        "param_dtype": jnp.bfloat16,
+        "vocab_size": 32064,  # "cond_dim": 768,
     }
     tokenizer, model = init_from("microsoft/Phi-3.5-mini-instruct", **kw)

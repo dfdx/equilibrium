@@ -5,22 +5,21 @@
 		"dockerfile": "../Dockerfile"
 		// "options": ["--network=host"]
 	},
-
 	"mounts": [
 		"source=${localEnv:HOME}/.cache/huggingface/,target=/home/devpod/.cache/huggingface/,type=bind,consistency=cached",
 		// "source=${localEnv:HOME}/.vscode-server,target=/home/devpod/.vscode-server,type=bind,consistency=cached",
 		"source=${localEnv:HOME}/data/,target=/data/,type=bind,consistency=cached"
 	],
-
 	"containerEnv": {
 		"HF_TOKEN": "${localEnv:HF_TOKEN_PERSONAL}",
 		"PYTHONPATH": "${PYTHONPATH}:src",
 		"JAX_COMPILATION_CACHE_DIR": "/tmp/jax_cache",
 		"XLA_PYTHON_CLIENT_MEM_FRACTION": ".99"
 	},
-
-	"runArgs": ["--gpus", "all"],
-
+	"runArgs": [
+		"--gpus",
+		"all"
+	],
 	// Add VS Code specific settings and extensions
 	"customizations": {
 		"vscode": {
@@ -29,13 +28,13 @@
 				"ms-python.vscode-pylance",
 				"ms-python.black-formatter"
 			],
-			"settings": {
-				"editor.formatOnSave": true,
-				"[python]": {
-					"editor.defaultFormatter": "ms-python.black-formatter"
-				},
-				"python.defaultInterpreterPath": "/venv/bin/python"
-			}
+			// "settings": {
+			// 	"editor.formatOnSave": true,
+			// 	"[python]": {
+			// 		"editor.defaultFormatter": "ms-python.black-formatter"
+			// 	},
+			// 	"python.defaultInterpreterPath": "/venv/bin/python"
+			// }
 		}
 	}
 }

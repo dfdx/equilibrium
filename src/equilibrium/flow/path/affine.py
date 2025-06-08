@@ -3,8 +3,7 @@ import jax.numpy as jnp
 
 from equilibrium.flow.path.path import ProbPath
 from equilibrium.flow.path.path_sample import PathSample
-from equilibrium.flow.path.scheduler.scheduler import (CondOTScheduler,
-                                                       Scheduler)
+from equilibrium.flow.path.scheduler.scheduler import CondOTScheduler, Scheduler
 from equilibrium.utils import expand_tensor_like
 
 

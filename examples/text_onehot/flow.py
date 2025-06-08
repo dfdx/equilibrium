@@ -18,7 +18,7 @@ from equilibrium.oldutils import load_model, plot_samples, save_model
 from examples.text_onehot.encoder import OneHotEncoder, build_char_vocab
 from examples.text_onehot.model import ModelArgs, Transformer
 
-RUN_TAG = datetime.now().strftime('%Y-%m-%d_%H-%M')
+RUN_TAG = datetime.now().strftime("%Y-%m-%d_%H-%M")
 TENSORBOARD_PATH = f"/tmp/tensorboard/{RUN_TAG}"
 MODEL_PATH = f"output/ckpt-text/{RUN_TAG}"
 N_EPOCHS = 20
@@ -73,7 +73,13 @@ def training():
     vocab = build_char_vocab(ds["quote"])
     encoder = OneHotEncoder(vocab, max_length=max_length)
 
-    args = ModelArgs(dim=len(vocab), n_layers=8, n_heads=8, vocab_size=len(vocab), ffn_hidden_size=256)
+    args = ModelArgs(
+        dim=len(vocab),
+        n_layers=8,
+        n_heads=8,
+        vocab_size=len(vocab),
+        ffn_hidden_size=256,
+    )
     model = Transformer(args)
 
     # run train loop
@@ -103,6 +109,7 @@ def training():
 
 def sampling(model_path: str, encoder: OneHotEncoder, args: ModelArgs):
     import os
+
     with jax.checking_leaks():
         model_path = os.path.abspath("output/ckpt-text/9")
         args.max_seq_len = 32
@@ -128,7 +135,6 @@ def main():
     args = ModelArgs(dim=len(vocab), n_layers=2, n_heads=8, vocab_size=len(vocab))
     model = Transformer(args)
 
-
     texts = ["Let's have a black celebration", "Let's come together!"]
     x, pad_mask = encoder.encode(texts)
     encoder.decode(x)
@@ -142,6 +148,4 @@ def main():
         letters = [encoder.id2token[id.item()] for id in ids]
         print("".join(letters))
 
-
     # next step: flow matching training
-

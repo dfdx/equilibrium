@@ -4,8 +4,8 @@ import jax.numpy as jnp
 
 
 def pairwise_euclidean(x, y):
-  assert x.ndim == y.ndim == 2
-  return jnp.sqrt(((x[:, None, :] - y[None, :, :]) ** 2).sum(-1))
+    assert x.ndim == y.ndim == 2
+    return jnp.sqrt(((x[:, None, :] - y[None, :, :]) ** 2).sum(-1))
 
 
 class Rounding:
@@ -23,7 +23,6 @@ class Rounding:
     closest_tokens = llm.tokenizer.decode_batch(indexes)
     print(closest_tokens)
     """
-
 
     def __init__(self, embedding: nnx.Embed):
         self.embedding = embedding
@@ -54,8 +53,8 @@ def main():
     # k = 5
     # x = jax.random.normal(rngs(), (4, 10))
 
-
     from fabrique import LLM
+
     model_id = "microsoft/Phi-3.5-mini-instruct"
     llm = LLM.from_pretrained(model_id, max_seq_len=512, use_cache=False)
     embedding = llm.model.tok_embeddings

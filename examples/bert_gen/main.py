@@ -1,4 +1,3 @@
-
 from datetime import datetime
 
 import flax.nnx as nnx
@@ -17,7 +16,7 @@ from examples.bert_gen.generator import Transformer as Generator
 from examples.bert_gen.generator import init_from
 from examples.text_onehot.encoder import OneHotEncoder, build_char_vocab
 
-RUN_TAG = datetime.now().strftime('%Y-%m-%d_%H-%M')
+RUN_TAG = datetime.now().strftime("%Y-%m-%d_%H-%M")
 TENSORBOARD_PATH = f"/tmp/tensorboard/{RUN_TAG}"
 MODEL_PATH = f"output/ckpt-text/{RUN_TAG}"
 N_EPOCHS = 20
@@ -36,8 +35,11 @@ def loss_fn(model, encoder, batch: dict):
     loss = (loss * mask).sum() / mask.sum()  # ignore loss at padding
     return loss, logits
 
+
 @nnx.jit
-def train_step(model, enc: jax.Array, optimizer: nnx.Optimizer, metrics: nnx.MultiMetric):
+def train_step(
+    model, enc: jax.Array, optimizer: nnx.Optimizer, metrics: nnx.MultiMetric
+):
     grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
     (loss, _), grad = grad_fn(model, enc)
     optimizer.update(grad)
@@ -75,8 +77,6 @@ def train(model, encoder, ds: Dataset):
                 break
 
 
-
-
 # def main():
 #     from equilibrium.utils.inspection import print_size
 
@@ -101,21 +101,25 @@ def main():
     # vocab = build_char_vocab(ds["quote"])
 
     kw = {
-        "max_seq_len": 512, "max_batch_size": 1, "dtype": jnp.bfloat16, "param_dtype": jnp.bfloat16, "vocab_size": 32064, # "cond_dim": 768,
+        "max_seq_len": 512,
+        "max_batch_size": 1,
+        "dtype": jnp.bfloat16,
+        "param_dtype": jnp.bfloat16,
+        "vocab_size": 32064,  # "cond_dim": 768,
     }
     with jax.checking_leaks():
         tokenizer, model = init_from("microsoft/Phi-3.5-mini-instruct", **kw)
         enc_tokenizer, encoder, _ = from_pretrained("google-bert/bert-base-uncased")
 
-        cond_tokens = jnp.array([enc.ids for enc in enc_tokenizer.encode_batch(["Hello world"])])
+        cond_tokens = jnp.array(
+            [enc.ids for enc in enc_tokenizer.encode_batch(["Hello world"])]
+        )
         cond = encoder(cond_tokens)[:, 0, :]
 
         tokens = jnp.array([enc.ids for enc in enc_tokenizer.encode_batch(["<start>"])])
         out = model(tokens, start_pos=0, cond=cond)
 
-
     train(model, encoder, ds)
-
 
     texts = ["Let's have a black celebration", "Let's come together!"]
     x, pad_mask = encoder.encode(texts)
@@ -124,4 +128,3 @@ def main():
     encoder.decode(y)
 
     # next step: flow matching training
-

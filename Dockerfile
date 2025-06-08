@@ -94,8 +94,10 @@ WORKDIR "${BUILD_DIR}"
 RUN uv lock && uv sync --active
 WORKDIR /home/${user}
 
-# Install specific variation of JAX, but don't add to prooject dependencies
-RUN uv pip install jax[cuda]==0.6.0
+
+# Install specific variation of JAX, but don't add to project dependencies
+RUN uv pip install jax[cuda12]==0.6.0
+
 
 
 ###########################################################

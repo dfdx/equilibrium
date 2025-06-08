@@ -1,4 +1,3 @@
-
 import flax.nnx as nnx
 import jax
 import optax
@@ -21,8 +20,11 @@ def loss_fn(model, batch: dict):
     loss = (loss * mask).sum() / mask.sum()  # ignore loss at padding
     return loss, logits
 
+
 @nnx.jit
-def train_step(model, enc: jax.Array, optimizer: nnx.Optimizer, metrics: nnx.MultiMetric):
+def train_step(
+    model, enc: jax.Array, optimizer: nnx.Optimizer, metrics: nnx.MultiMetric
+):
     grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
     (loss, _), grad = grad_fn(model, enc)
     optimizer.update(grad)
@@ -71,7 +73,6 @@ def main():
 
     train(model, encoder, ds)
 
-
     texts = ["Let's have a black celebration", "Let's come together!"]
     x, pad_mask = encoder.encode(texts)
     encoder.decode(x)
@@ -79,4 +80,3 @@ def main():
     encoder.decode(y)
 
     # next step: flow matching training
-

@@ -6,8 +6,10 @@ from typing import Optional
 import jax
 import jax.numpy as jnp
 from fabrique.models.common.cache import KVCache, concatenate_to_cache
-from fabrique.models.common.embeddings import (apply_rotary_pos_emb,
-                                               create_sinusoidal_positions)
+from fabrique.models.common.embeddings import (
+    apply_rotary_pos_emb,
+    create_sinusoidal_positions,
+)
 from fabrique.models.common.norm import RMSNorm
 from fabrique.models.common.utils import padding_to_attention_mask
 from fabrique.utils import check_and_update_fields
@@ -102,11 +104,7 @@ class Attention(nnx.Module):
         self.cache_k = KVCache(jnp.zeros(cache_shape, args.param_dtype))
         self.cache_v = KVCache(jnp.zeros(cache_shape, args.param_dtype))
 
-    def __call__(
-        self,
-        x: jax.Array,
-        padding_mask: jax.Array
-    ):
+    def __call__(self, x: jax.Array, padding_mask: jax.Array):
         """
         Forward pass of the attention module.
 
@@ -132,7 +130,6 @@ class Attention(nnx.Module):
 
         xq, xk = apply_rotary_pos_emb(xq, xk, self.sincos.value, start_pos)
 
-
         # mask = jax.lax.dynamic_slice(
         #     self.full_causal_mask.value, (0, start_pos, 0), (1, q_len, kv_len)
         # )
@@ -142,7 +139,7 @@ class Attention(nnx.Module):
         #     mask = nnx.combine_masks(mask, pad_attn_mask).astype(bool)  # type: ignore
 
         # using only padding mask
-        mask = padding_to_attention_mask(padding_mask) # , shape=mask.shape)
+        mask = padding_to_attention_mask(padding_mask)  # , shape=mask.shape)
 
         output = jax.nn.dot_product_attention(xq, xk, xv, mask=mask[:, None, :, :])
         output = output.reshape(output.shape[:2] + (self.args.dim,))
@@ -301,7 +298,9 @@ class Transformer(nnx.Module):
         self.norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.output = nnx.Linear(args.dim, args.vocab_size, use_bias=False, rngs=rngs)
 
-    def __call__(self, x: jax.Array, padding_mask: jax.Array, t: jax.Array | None = None):
+    def __call__(
+        self, x: jax.Array, padding_mask: jax.Array, t: jax.Array | None = None
+    ):
         h = x
         if t is not None:
             t_emb = timestep_embedding(t, x.shape[-1])[:, None, :]

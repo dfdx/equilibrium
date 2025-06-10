@@ -4,9 +4,12 @@ from fabrique.models.common.embeddings import create_sinusoidal_positions
 from fabrique.models.common.norm import RMSNorm
 from flax import nnx
 from flax.nnx.graph import Static
+from datasets import load_dataset
 import optax
 
 from equilibrium.models.transformer import ModelArgs, TransformerBlock
+from equilibrium.tokenizer import Tokenizer
+
 
 # tokens -> Embed -> Encoder -> Decoder -> Classifier -> out_tokens
 
@@ -117,14 +120,32 @@ def train_step(model: VAE, optimizer: nnx.Optimizer, tokens: jax.Array):
     return loss
 
 
+
+BATCH_SIZE = 8
+TEXT_LEN = 128
+
 def main():
-    args = ModelArgs(vocab_size=32_000)
+    dataset = load_dataset("open-r1/codeforces")
+    tokenizer = Tokenizer.from_pretrained("google/gemma-3-1b-it")
+
+    args = ModelArgs(vocab_size=tokenizer.vocab_size, max_seq_len=TEXT_LEN)
     model = VAE(args)
-    optimizer = nnx.Optimizer(model, optax.adam(1e-5))
+    optimizer = nnx.Optimizer(model, optax.sgd(1e-3))
 
-    tokens = jax.numpy.arange(32).reshape(-1, 1)
+    # tokens = jax.numpy.arange(32).reshape(-1, 1)
+    batch = next(dataset["test"].iter(BATCH_SIZE))
 
-    for epoch in range(2001):
-        loss = train_step(model, optimizer, tokens)
-        if epoch % 10 == 0:
-            print(f"Epoch {epoch} loss: {loss}")
+    for epoch in range(100):
+        for bi, batch in enumerate(dataset["test"].iter(batch_size=BATCH_SIZE)):
+            texts = batch["description"]
+            tokens, attn_mask = tokenizer(texts, max_length=TEXT_LEN, padding_length=TEXT_LEN)
+            loss = train_step(model, optimizer, tokens)
+            if bi % 10 == 0:
+                print(f"Epoch {epoch} batch {bi} loss: {loss}")
+
+
+    batch = next(dataset["test"].iter(BATCH_SIZE))
+    texts = batch["description"]
+    tokens, attn_mask = tokenizer(texts, max_length=TEXT_LEN, padding_length=TEXT_LEN)
+    logits, _, _ = model(tokens)
+    tokenizer.decode(logits.argmax(axis=-1))

@@ -1,15 +1,16 @@
+import os
 import jax
 import jax.numpy as jnp
+import optax
+import orbax.checkpoint as ocp
+from datasets import load_dataset
 from fabrique.models.common.embeddings import create_sinusoidal_positions
 from fabrique.models.common.norm import RMSNorm
 from flax import nnx
 from flax.nnx.graph import Static
-from datasets import load_dataset
-import optax
 
 from equilibrium.models.transformer import ModelArgs, TransformerBlock
 from equilibrium.tokenizer import Tokenizer
-
 
 # tokens -> Embed -> Encoder -> Decoder -> Classifier -> out_tokens
 
@@ -109,7 +110,9 @@ def vae_loss(model: VAE, tokens: jax.Array):
     kl_loss = jnp.mean(
         0.5 * jnp.mean(-jnp.log(std**2) - 1.0 + std**2 + mean**2, axis=-1)
     )
-    reconstruction_loss = jnp.mean(optax.softmax_cross_entropy_with_integer_labels(logits, tokens))
+    reconstruction_loss = jnp.mean(
+        optax.softmax_cross_entropy_with_integer_labels(logits, tokens)
+    )
     return reconstruction_loss + 0.1 * kl_loss
 
 
@@ -120,9 +123,35 @@ def train_step(model: VAE, optimizer: nnx.Optimizer, tokens: jax.Array):
     return loss
 
 
+###############################################################################
+
+
+class bcolors:
+    HEADER = "\033[95m"
+    OKBLUE = "\033[94m"
+    OKCYAN = "\033[96m"
+    OKGREEN = "\033[92m"
+    WARNING = "\033[93m"
+    FAIL = "\033[91m"
+    ENDC = "\033[0m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
+
+
+def sample(model, tokenizer, dataset):
+    batch = next(dataset["test"].iter(BATCH_SIZE))
+    texts = batch["description"]
+    tokens, attn_mask = tokenizer(texts, max_length=TEXT_LEN, padding_length=TEXT_LEN)
+    logits, _, _ = model(tokens)
+    out_texts = tokenizer.decode(logits.argmax(axis=-1))
+    for in_text, out_text in zip(texts, out_texts):
+        print(f"{bcolors.HEADER}{in_text}{bcolors.ENDC}\n---")
+        print(f"{bcolors.OKGREEN}{out_text}{bcolors.ENDC}\n------------------")
+
 
 BATCH_SIZE = 8
 TEXT_LEN = 128
+
 
 def main():
     dataset = load_dataset("open-r1/codeforces")
@@ -135,17 +164,23 @@ def main():
     # tokens = jax.numpy.arange(32).reshape(-1, 1)
     batch = next(dataset["test"].iter(BATCH_SIZE))
 
-    for epoch in range(100):
+    for epoch in range(30):
         for bi, batch in enumerate(dataset["test"].iter(batch_size=BATCH_SIZE)):
             texts = batch["description"]
-            tokens, attn_mask = tokenizer(texts, max_length=TEXT_LEN, padding_length=TEXT_LEN)
+            tokens, attn_mask = tokenizer(
+                texts, max_length=TEXT_LEN, padding_length=TEXT_LEN
+            )
             loss = train_step(model, optimizer, tokens)
             if bi % 10 == 0:
                 print(f"Epoch {epoch} batch {bi} loss: {loss}")
 
+    _, state = nnx.split(model)
+    nnx.display(state)
 
-    batch = next(dataset["test"].iter(BATCH_SIZE))
-    texts = batch["description"]
-    tokens, attn_mask = tokenizer(texts, max_length=TEXT_LEN, padding_length=TEXT_LEN)
-    logits, _, _ = model(tokens)
-    tokenizer.decode(logits.argmax(axis=-1))
+    checkpointer = ocp.StandardCheckpointer()
+    checkpointer.save(os.path.abspath("output/vae"), state)
+
+    # restore:
+    # https://flax.readthedocs.io/en/latest/guides/checkpointing.html
+
+    sample(model, tokenizer, dataset)

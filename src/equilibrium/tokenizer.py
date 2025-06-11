@@ -1,28 +1,26 @@
-import os
 import json
+import os
+
 import jax
 import jax.numpy as jnp
 from huggingface_hub import snapshot_download
 from tokenizers import Tokenizer as HFTokenizer
 
-
-
-    # def collate_with_padding(
-    #     self, prompt_token_list: List[List[int]], pad_token_id: int
-    # ):
-    #     if len(prompt_token_list) > 1:
-    #         logger.warning(
-    #             "Padding sequences from the beginning. Results for shorter "
-    #             + "sequences may or may not be meaningful depending on the model."
-    #         )
-    #     max_tokens = max(len(tokens) for tokens in prompt_token_list)
-    #     return jnp.array(
-    #         [
-    #             [pad_token_id] * (max_tokens - len(tokens)) + tokens
-    #             for tokens in prompt_token_list
-    #         ]
-    #     )
-
+# def collate_with_padding(
+#     self, prompt_token_list: List[List[int]], pad_token_id: int
+# ):
+#     if len(prompt_token_list) > 1:
+#         logger.warning(
+#             "Padding sequences from the beginning. Results for shorter "
+#             + "sequences may or may not be meaningful depending on the model."
+#         )
+#     max_tokens = max(len(tokens) for tokens in prompt_token_list)
+#     return jnp.array(
+#         [
+#             [pad_token_id] * (max_tokens - len(tokens)) + tokens
+#             for tokens in prompt_token_list
+#         ]
+#     )
 
 
 class SpecialTokenMap:
@@ -121,11 +119,10 @@ class Tokenizer:
         lengths = [len(e.ids) for e in encodings]
         if not all(length == lengths[0] for length in lengths):
             raise ValueError(
-                "Tokenization produced sequences of different lengths, " +
-                "which cannot be combined into a single array. Please, " +
-                "use padding and/or truncation to align the sequences. " +
-                f"Lengths of sequences were: {lengths}"
-
+                "Tokenization produced sequences of different lengths, "
+                + "which cannot be combined into a single array. Please, "
+                + "use padding and/or truncation to align the sequences. "
+                + f"Lengths of sequences were: {lengths}"
             )
         tokens = jnp.asarray([e.ids for e in encodings])
         padding_mask = jnp.array([e.attention_mask for e in encodings])

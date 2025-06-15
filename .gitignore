@@ -154,6 +154,8 @@ app.logs
 __MACOSX/
 class_by_href_text/
 
+# W&B
+wandb/
 
 # custom
 output/

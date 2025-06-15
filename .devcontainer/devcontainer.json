@@ -12,6 +12,7 @@
 	],
 	"containerEnv": {
 		"HF_TOKEN": "${localEnv:HF_TOKEN_PERSONAL}",
+		"WANDB_API_KEY": "${localEnv:WANDB_API_KEY}",
 		"PYTHONPATH": "${PYTHONPATH}:src",
 		"JAX_COMPILATION_CACHE_DIR": "/tmp/jax_cache",
 		"XLA_PYTHON_CLIENT_MEM_FRACTION": ".99"

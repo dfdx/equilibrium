@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
+import wandb
 from datasets import load_dataset
 from fabrique.models.common.embeddings import create_sinusoidal_positions
 from fabrique.models.common.norm import RMSNorm
@@ -19,7 +20,7 @@ class Encoder(nnx.Module):
 
     def __init__(self, args: ModelArgs, rngs: nnx.Rngs = nnx.Rngs(params=0, noise=8)):
         self.args = args
-        self.rngs = rngs
+        # self.rngs = rngs
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers
 
@@ -43,7 +44,7 @@ class Encoder(nnx.Module):
         self.linear_mean = nnx.Linear(args.dim, args.dim, use_bias=False, rngs=rngs)
         self.linear_std = nnx.Linear(args.dim, args.dim, use_bias=False, rngs=rngs)
 
-    def __call__(self, tokens: jax.Array, padding_mask: jax.Array | None = None):
+    def __call__(self, tokens: jax.Array, rngs: nnx.Rngs, padding_mask: jax.Array | None = None):
         h = self.tok_embeddings(tokens)
         for i, layer in enumerate(self.layers):
             h = layer(
@@ -55,7 +56,7 @@ class Encoder(nnx.Module):
         mean = self.linear_mean(h)
         std = jnp.exp(self.linear_std(h))
 
-        key = self.rngs.noise()
+        key = rngs.noise()
         z = mean + std * jax.random.normal(key, mean.shape)
         return z, mean, std
 
@@ -64,7 +65,7 @@ class Decoder(nnx.Module):
 
     def __init__(self, args: ModelArgs, rngs: nnx.Rngs = nnx.Rngs(params=10)):
         self.args = args
-        self.rngs = rngs
+        # self.rngs = rngs
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers
 
@@ -98,15 +99,15 @@ class VAE(nnx.Module):
         self.encoder = Encoder(args, rngs=rngs)
         self.decoder = Decoder(args, rngs=rngs)
 
-    def __call__(self, tokens: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
-        z, mean, std = self.encoder(tokens)
+    def __call__(self, tokens: jax.Array, rngs: nnx.Rngs) -> tuple[jax.Array, jax.Array, jax.Array]:
+        z, mean, std = self.encoder(tokens, rngs)
         logits = self.decoder(z)
         return logits, mean, std
 
 
-def vae_loss(model: VAE, tokens: jax.Array):
+def vae_loss(model: VAE, tokens: jax.Array, rngs: nnx.Rngs):
     # TODO: take padding into account
-    logits, mean, std = model(tokens)
+    logits, mean, std = model(tokens, rngs)
     kl_loss = jnp.mean(
         0.5 * jnp.mean(-jnp.log(std**2) - 1.0 + std**2 + mean**2, axis=-1)
     )
@@ -117,13 +118,16 @@ def vae_loss(model: VAE, tokens: jax.Array):
 
 
 @nnx.jit
-def train_step(model: VAE, optimizer: nnx.Optimizer, tokens: jax.Array):
-    loss, grads = nnx.value_and_grad(vae_loss)(model, tokens)
+def train_step(model: VAE, optimizer: nnx.Optimizer, tokens: jax.Array, rngs: nnx.Rngs):
+    loss, grads = nnx.value_and_grad(vae_loss)(model, tokens, rngs)
     optimizer.update(grads)
     return loss
 
 
 ###############################################################################
+
+
+wandb.login()
 
 
 class bcolors:
@@ -138,49 +142,71 @@ class bcolors:
     UNDERLINE = "\033[4m"
 
 
-def sample(model, tokenizer, dataset):
+def sample(model, tokenizer, dataset, rngs=nnx.Rngs(0)):
     batch = next(dataset["test"].iter(BATCH_SIZE))
     texts = batch["description"]
     tokens, attn_mask = tokenizer(texts, max_length=TEXT_LEN, padding_length=TEXT_LEN)
-    logits, _, _ = model(tokens)
+    logits, _, _ = model(tokens, rngs)
     out_texts = tokenizer.decode(logits.argmax(axis=-1))
     for in_text, out_text in zip(texts, out_texts):
         print(f"{bcolors.HEADER}{in_text}{bcolors.ENDC}\n---")
         print(f"{bcolors.OKGREEN}{out_text}{bcolors.ENDC}\n------------------")
 
 
-BATCH_SIZE = 8
+BATCH_SIZE = 16
 TEXT_LEN = 128
+CHECKPOINT_PATH = os.path.abspath("output/vae_450_epochs")
+
+
+def save_model(model: VAE, path: str):
+    _, state = nnx.split(model)
+    checkpointer = ocp.StandardCheckpointer()
+    checkpointer.save(os.path.abspath(path), state)
+
+
+def load_model(path: str, args: ModelArgs, rng_seed: int = 0):
+    abstract_model = nnx.eval_shape(lambda: VAE(args, rngs=nnx.Rngs(rng_seed)))
+    graphdef, abstract_state = nnx.split(abstract_model)
+    checkpointer = ocp.StandardCheckpointer()
+    state_restored = checkpointer.restore(path, abstract_state)
+    return nnx.merge(graphdef, state_restored)
+
 
 
 def main():
+    run = wandb.init(
+        project="equilibrium-text-vae",
+        config={
+            "learning_rate": 5e-3,
+            "epochs": 200,
+        },
+    )
+
     dataset = load_dataset("open-r1/codeforces")
     tokenizer = Tokenizer.from_pretrained("google/gemma-3-1b-it")
 
     args = ModelArgs(vocab_size=tokenizer.vocab_size, max_seq_len=TEXT_LEN)
-    model = VAE(args)
-    optimizer = nnx.Optimizer(model, optax.sgd(1e-3))
+    rngs = nnx.Rngs(params=10, noise=20)
+    if os.path.exists(CHECKPOINT_PATH):
+        model = load_model(CHECKPOINT_PATH, args, rng_seed=0)
+    else:
+        model = VAE(args, rngs=rngs)
+    optimizer = nnx.Optimizer(model, optax.sgd(run.config.learning_rate))
 
     # tokens = jax.numpy.arange(32).reshape(-1, 1)
     batch = next(dataset["test"].iter(BATCH_SIZE))
 
-    for epoch in range(30):
+
+    for epoch in range(run.config.epochs):
         for bi, batch in enumerate(dataset["test"].iter(batch_size=BATCH_SIZE)):
             texts = batch["description"]
             tokens, attn_mask = tokenizer(
                 texts, max_length=TEXT_LEN, padding_length=TEXT_LEN
             )
-            loss = train_step(model, optimizer, tokens)
+            loss = train_step(model, optimizer, tokens, rngs)
+            wandb.log({"loss": loss.item()})
             if bi % 10 == 0:
                 print(f"Epoch {epoch} batch {bi} loss: {loss}")
 
-    _, state = nnx.split(model)
-    nnx.display(state)
-
-    checkpointer = ocp.StandardCheckpointer()
-    checkpointer.save(os.path.abspath("output/vae"), state)
-
-    # restore:
-    # https://flax.readthedocs.io/en/latest/guides/checkpointing.html
-
     sample(model, tokenizer, dataset)
+    save_model(model, CHECKPOINT_PATH + "_650_epochs")

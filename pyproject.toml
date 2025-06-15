@@ -15,6 +15,7 @@ dependencies = [
     "jax[cuda]==0.6.1",
     "jaxlib[cuda]==0.6.1",
     "datasets>=3.6.0",
+    "wandb>=0.20.1",
 ]
 
 [dependency-groups]
